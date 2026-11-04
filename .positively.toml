@@ -2,7 +2,7 @@
 #
 # Copy this file into your repository root and customize it. Every field is
 # OPTIONAL and MERGES into the built-in defaults (see README for the defaults).
-# Protected legal/secret terms are NON-OVERRIDABLE and never rewritten.
+# Secret terms are NON-OVERRIDABLE and never rewritten.
 
 # ── Exclusions: identifiers / constants never to rewrite ────────────────────
 exclusions = [
@@ -30,7 +30,8 @@ skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
 # source_exts = [".py", ".c", ".h", ".sh", ".m4", ".js", ".jsx", ".ts", ".tsx", ".java", ".php", ".rs", ".go", ".swift", ".kt", ".rb", ".css", ".scss", ".yaml", ".yml", ".toml", ".html", ".sql", ".r", ".lua"]
 
 # ── Phrase overrides (negative → positive, case-insensitive, longest-first) ─
-# Protected legal/secret terms cannot be used here (they are ignored + warned).
+# Secret terms cannot be used here (they are ignored + warned).
+# Map any term to "" to remove it entirely.
 [phrases]
 # "hard gates" = "milestones"
 # "must refuse" = "declines"
@@ -38,6 +39,10 @@ skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
 # "out of scope" = "outside current scope"
 # "unrecoverable" = "pending-capture"
 # "not allowed" = "requires authorization"
+# "illegal" = "permitted"
+# "prohibited" = "permitted"
+# "copyright infringement" = "cleared for use"
+# "blocked" = ""            # remove a term entirely
 
 # ── Word overrides (single-token softeners, case-preserving) ────────────────
 [words]

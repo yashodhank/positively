@@ -50,6 +50,8 @@ def main() -> int:
                 continue
             if any(part in cfg.skip_parts for part in p.parts):
                 continue
+            if p.name in patterns.SKIP_FILENAMES:
+                continue
             if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES:
                 paths.append(p)
     else:

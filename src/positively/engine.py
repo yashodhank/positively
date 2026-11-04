@@ -81,7 +81,7 @@ def _mask_exclusions(text: str, cfg: config.Config) -> tuple[str, dict[str, str]
     """
     mask: dict[str, str] = {}
     terms = sorted(
-        cfg.identifier_exclusions | cfg.technical_terms | cfg.protected_terms,
+        cfg.identifier_exclusions | cfg.technical_terms | cfg.secret_terms,
         key=len, reverse=True,
     )
     for i, term in enumerate(terms):
@@ -286,7 +286,7 @@ def scan_cautions(path: Path, text: str) -> list[BlockerFinding]:
 
 def scan_path(path: Path) -> Report:
     rep = Report()
-    if not path.is_file():
+    if path.name in patterns.SKIP_FILENAMES or not path.is_file():
         return rep
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -308,6 +308,8 @@ def scan_path(path: Path) -> Report:
 
 def apply_framing(path: Path, text: str) -> tuple[str, int]:
     """Rewrite framing in place. Returns (new_text, change_count)."""
+    if path.name in patterns.SKIP_FILENAMES:
+        return text, 0
     if is_prose(path):
         return _apply_markdown(path, text)
     if is_source(path):

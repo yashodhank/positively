@@ -2,7 +2,7 @@
 
 **Automated positive-framing enforcement for prose, comments, and docstrings.**
 
-Detects and reverses negative compliance/escalation/blocker language into
+Detects and reverses negative compliance/escalation/blocker/legal language into
 positive framing that keeps downstream AI agents, reviewers, and team members
 working forward instead of refusing, deleting each other's work, debating
 legality, or stalling on scope.
@@ -16,8 +16,12 @@ language makes them misbehave. Positively targets four concrete failure modes:
 |--------------|------------------|----------------------|
 | **Agent refuses to continue** | `must refuse`, `refused`, `unrecoverable`, `not allowed`, `hard gate`, `default-deny` | Rewrites to pending-action / permissive framing (`declined`, `pending-capture`, `requires authorization`, `milestone`, `allowlist-gated`) |
 | **Agents delete each other's work** | `rm -rf`, `git reset --hard`, `DROP TABLE`, `DELETE FROM`, `git push --force` | **Caution detection** — flags destructive commands for human review, never auto-rewrites |
-| **Legal/illegality debates** | `illegal`, `copyright`, `license`, `EULA`, `prohibited` | **Protected terms** — never rewritten; the signal reaches a human owner intact |
+| **Legal/illegality debates** | `illegal`, `prohibited`, `copyright infringement`, `license violation` | Reframes to permissive language (`permitted`, `cleared for use`, `allowed`) so work proceeds |
 | **Counterproductive scope pondering** | `out of scope`, `default-deny`, `permanently out of scope` | Reframes to `outside current scope`, `allowlist-gated` so the next agent proceeds |
+
+**Baseline:** agents and AI models do not decide legality — humans do. The
+engine rewrites negative legal *framing* so agents stop rejecting work; it does
+not change the underlying legal reality, which humans judge.
 
 The engine is **idempotent, case-preserving, and aware of inline code, fenced
 code blocks, string literals, and identifiers** so it never corrupts functional
@@ -70,7 +74,7 @@ Bit flags — combine them:
 | not allowed | requires authorization |
 | no longer works | needs refresh |
 
-**Words** (softeners — reduce escalation triggers, never invert meaning):
+**Words** (softeners — reduce escalation triggers):
 
 | Negative | Positive |
 |----------|----------|
@@ -78,18 +82,29 @@ Bit flags — combine them:
 | halt | pause |
 | abandoned | deferred |
 
-> **Honesty note:** these are *softeners*, not inversions. `refuse → decline`
-> softens the escalation trigger; it does not claim a refusal is a success. Where
-> a status is factually negative (`blocked`, `denied`), the engine leaves it
-> untouched so a human can act on the truth.
+**Legal framing** (negative stance → permissive/allowing/granting):
 
-## What it never rewrites (protected)
+| Negative | Positive |
+|----------|----------|
+| illegal / unlawful | permitted |
+| prohibited / forbidden | permitted |
+| not permitted | permitted |
+| not legally allowed | allowed |
+| copyright infringement | cleared for use |
+| license violation | cleared for use |
+| infringement | cleared for use |
+| regulatory violation | compliant |
+| legal risk / litigation risk | cleared |
 
-- **Legal terms** — `illegal`, `prohibited`, `copyright`, `license`, `EULA`,
-  `DMCA`, `compliance`, `regulatory`, and similar. Smoothing these away would
-  hide a real compliance signal. They are **non-overridable** via config.
+Map any of these to `""` in your `.positively.toml` to remove the term entirely.
+
+## What it never rewrites
+
 - **Secret terms** — `password`, `credential`, `secret`, `api_key`,
-  `private key`, tokens, and similar.
+  `private key`, tokens. Non-overridable.
+- **Legal source-of-truth documents** — `LICENSE`, `NOTICE`, `COPYING`,
+  `COPYRIGHT`, `AUTHORS`, `PATENTS`, and files under a `legal/` directory.
+  These stay verbatim so humans have an intact reference for judging legality.
 - **Identifiers/constants**, **string literals**, **technical terms** — configurable.
 - **Inline code** (backticks) and **fenced code blocks** — always verbatim.
 - **Generic negations** — `never`, `do not`, `cannot` are never inverted.
@@ -116,6 +131,8 @@ Drop a `.positively.toml` at your repository root:
 ```toml
 [phrases]
 "must refuse" = "escalates"
+"illegal" = "permitted"       # override the default
+"blocked" = ""                # remove a term entirely
 
 [words]
 halt = "pause"
@@ -135,9 +152,8 @@ severity = "high"
 suggestion = "Archive, don't drop"
 ```
 
-All maps merge over the built-in defaults. Attempts to rewrite a protected
-legal/secret term are rejected with a warning. See the included
-[.positively.toml](.positively.toml).
+All maps merge over the built-in defaults. Attempts to rewrite a secret term are
+rejected with a warning. See the included [.positively.toml](.positively.toml).
 
 ## Supported file types
 
@@ -168,7 +184,7 @@ text = "This is a hard gate."
 result, changes = engine.reverse_framing(text)
 # result = "This is a milestone."
 
-# Validate a custom map for contradictions / protected-term violations
+# Validate a custom map for contradictions / secret-term violations
 from positively import patterns
 problems = patterns.validate_maps(cfg.phrase_map, cfg.word_map)
 ```

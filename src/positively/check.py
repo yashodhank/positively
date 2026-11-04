@@ -31,6 +31,8 @@ def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> lis
                 continue
             if any(part in cfg.skip_parts for part in p.parts):
                 continue
+            if p.name in patterns.SKIP_FILENAMES:
+                continue
             if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES:
                 paths.append(p)
         return paths
@@ -39,6 +41,7 @@ def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> lis
         p = Path(a)
         if p.is_dir():
             paths.extend(f for f in p.rglob("*") if f.is_file()
+                         and f.name not in patterns.SKIP_FILENAMES
                          and (f.suffix.lower() in (cfg.prose_exts | cfg.source_exts)
                               or f.name in patterns.FILENAMES))
         elif p.is_file():

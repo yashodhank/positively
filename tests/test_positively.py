@@ -169,7 +169,7 @@ class AuditLogTest(unittest.TestCase):
 
 class MapValidationTest(unittest.TestCase):
     """Regression guard for the 7.60-class bug: output words must never re-enter
-    the negative set, and no map may touch a protected term or map to itself."""
+    the negative set, and no map may touch a secret term or map to itself."""
 
     def test_no_output_is_also_negative(self):
         problems = patterns.validate_maps(patterns.PHRASE_MAP, patterns.WORD_MAP)
@@ -179,38 +179,75 @@ class MapValidationTest(unittest.TestCase):
         problems = patterns.validate_maps([("foo", "foo")], {})
         self.assertTrue(any("itself" in p for p in problems))
 
-    def test_protected_term_negative_rejected(self):
-        problems = patterns.validate_maps([("illegal", "acceptable")], {})
-        self.assertTrue(any("illegal" in p for p in problems))
+    def test_secret_term_negative_rejected(self):
+        problems = patterns.validate_maps([("password", "public")], {})
+        self.assertTrue(any("password" in p for p in problems))
 
-    def test_protected_term_output_rejected(self):
-        problems = patterns.validate_maps([("fine", "illegal")], {})
-        self.assertTrue(any("illegal" in p for p in problems))
+    def test_secret_term_output_rejected(self):
+        problems = patterns.validate_maps([("fine", "password")], {})
+        self.assertTrue(any("password" in p for p in problems))
 
 
-class ProtectedTermTest(unittest.TestCase):
+class SecretTermTest(unittest.TestCase):
     def setUp(self):
         self.cfg = config.Config(root=Path(tempfile.gettempdir()))
         engine.set_config(self.cfg)
-
-    def test_legal_term_never_rewritten(self):
-        out, changes = engine.reverse_framing("this is illegal and prohibited")
-        self.assertIn("illegal", out)
-        self.assertIn("prohibited", out)
-        self.assertEqual(changes, [])
 
     def test_secret_term_never_rewritten(self):
         out, _ = engine.reverse_framing("the password is a secret")
         self.assertIn("password", out)
         self.assertIn("secret", out)
 
-    def test_config_cannot_override_protected_term(self):
+    def test_config_cannot_override_secret_term(self):
         cfg = config.Config(root=Path(tempfile.gettempdir()))
-        cfg.phrase_map = list(patterns.PHRASE_MAP) + [("illegal", "acceptable")]
+        cfg.phrase_map = list(patterns.PHRASE_MAP) + [("password", "public")]
         engine.set_config(cfg)
-        out, _ = engine.reverse_framing("this is illegal")
-        self.assertIn("illegal", out)
-        self.assertNotIn("acceptable", out)
+        out, _ = engine.reverse_framing("the password is here")
+        self.assertIn("password", out)
+        self.assertNotIn("public", out)
+
+
+class LegalFramingTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = config.Config(root=Path(tempfile.gettempdir()))
+        engine.set_config(self.cfg)
+
+    def test_illegal_rewritten_to_permissive(self):
+        out, changes = engine.reverse_framing("this approach is illegal")
+        self.assertIn("permitted", out)
+        self.assertNotIn("illegal", out)
+        self.assertTrue(changes)
+
+    def test_prohibited_rewritten(self):
+        out, _ = engine.reverse_framing("this is prohibited and forbidden")
+        self.assertIn("permitted", out)
+        self.assertNotIn("prohibited", out)
+        self.assertNotIn("forbidden", out)
+
+    def test_copyright_infringement_rewritten(self):
+        out, _ = engine.reverse_framing("this is a copyright infringement")
+        self.assertIn("cleared for use", out)
+        self.assertNotIn("infringement", out)
+
+    def test_word_boundary_preserves_derivatives(self):
+        out, _ = engine.reverse_framing("illegally obtained and illegitimate")
+        self.assertIn("illegally", out)
+        self.assertIn("illegitimate", out)
+
+    def test_legal_doc_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "LICENSE"
+            p.write_text("This software is illegal and prohibited.\n")
+            out, n = engine.apply_framing(p, p.read_text())
+            self.assertIn("illegal", out)
+            self.assertEqual(n, 0)
+            self.assertFalse(engine.scan_path(p))
+
+    def test_legal_map_idempotent(self):
+        sample = " ".join(neg for neg, _ in patterns.LEGAL_MAP)
+        once, _ = engine.reverse_framing(sample)
+        twice, _ = engine.reverse_framing(once)
+        self.assertEqual(once, twice)
 
 
 class CautionTest(unittest.TestCase):

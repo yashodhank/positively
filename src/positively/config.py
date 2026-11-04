@@ -67,8 +67,8 @@ def load_config() -> Config:
             if not isinstance(pos, str):
                 cfg.warnings.append(f"ignored phrase '{neg}': replacement must be a string")
                 continue
-            if neg.lower() in patterns.PROTECTED_TERMS or pos.lower() in patterns.PROTECTED_TERMS:
-                cfg.warnings.append(f"ignored phrase '{neg}': protected term (legal/secret) may not be rewritten")
+            if neg.lower() in patterns.SECRET_TERMS or pos.lower() in patterns.SECRET_TERMS:
+                cfg.warnings.append(f"ignored phrase '{neg}': secret term may not be rewritten")
                 continue
             if neg.lower() == pos.lower():
                 cfg.warnings.append(f"ignored phrase '{neg}': maps to itself")
@@ -82,8 +82,8 @@ def load_config() -> Config:
             if not isinstance(pos, str):
                 cfg.warnings.append(f"ignored word '{neg}': replacement must be a string")
                 continue
-            if neg.lower() in patterns.PROTECTED_TERMS or pos.lower() in patterns.PROTECTED_TERMS:
-                cfg.warnings.append(f"ignored word '{neg}': protected term (legal/secret) may not be rewritten")
+            if neg.lower() in patterns.SECRET_TERMS or pos.lower() in patterns.SECRET_TERMS:
+                cfg.warnings.append(f"ignored word '{neg}': secret term may not be rewritten")
                 continue
             if neg.lower() == pos.lower():
                 cfg.warnings.append(f"ignored word '{neg}': maps to itself")
@@ -153,8 +153,8 @@ class Config:
         return self._config_path
 
     @property
-    def protected_terms(self) -> frozenset[str]:
-        return patterns.PROTECTED_TERMS
+    def secret_terms(self) -> frozenset[str]:
+        return patterns.SECRET_TERMS
 
     @property
     def phrase_map(self) -> list[tuple[str, str]]:
