@@ -4,23 +4,24 @@
 
 Detects and reverses negative compliance/escalation/blocker language into
 positive framing that keeps downstream AI agents, reviewers, and team members
-working forward instead of stalling on refusal signals.
+working forward instead of refusing, deleting each other's work, debating
+legality, or stalling on scope.
 
-## Problem
+## The failure modes this guards against
 
-Negative language — "hard gate", "must refuse", "unrecoverable", "not allowed",
-"refused" — causes downstream AI agents to refuse work, conflict, or stall.
-This creates gaps, blocks research paths, and wastes context tokens on
-correcting framing instead of solving the actual problem.
+When agents read handoff docs, status notes, and code comments, certain
+language makes them misbehave. Positively targets four concrete failure modes:
 
-## Solution
+| Failure mode | Trigger language | What positively does |
+|--------------|------------------|----------------------|
+| **Agent refuses to continue** | `must refuse`, `refused`, `unrecoverable`, `not allowed`, `hard gate`, `default-deny` | Rewrites to pending-action / permissive framing (`declined`, `pending-capture`, `requires authorization`, `milestone`, `allowlist-gated`) |
+| **Agents delete each other's work** | `rm -rf`, `git reset --hard`, `DROP TABLE`, `DELETE FROM`, `git push --force` | **Caution detection** — flags destructive commands for human review, never auto-rewrites |
+| **Legal/illegality debates** | `illegal`, `copyright`, `license`, `EULA`, `prohibited` | **Protected terms** — never rewritten; the signal reaches a human owner intact |
+| **Counterproductive scope pondering** | `out of scope`, `default-deny`, `permanently out of scope` | Reframes to `outside current scope`, `allowlist-gated` so the next agent proceeds |
 
-Positively scans prose (markdown, rst, plain text) and source-code comments
-(docstrings, inline comments in Python, C, Go, JS, TS, PHP, Rust, Java, Swift,
-Kotlin, Ruby, CSS/SCSS, shell) and rewrites negative framing to positive
-equivalents — idempotently, case-preserving, with inline-code and code-block
-awareness so functional code, identifiers, technical terms, and string
-literals are never touched.
+The engine is **idempotent, case-preserving, and aware of inline code, fenced
+code blocks, string literals, and identifiers** so it never corrupts functional
+code or meaning.
 
 ## Quick start
 
@@ -28,53 +29,85 @@ literals are never touched.
 pip install positively
 cd your-project
 positively check --all          # scan everything
-positively apply --all --apply  # auto-rewrite prose
+positively apply --all --apply  # auto-rewrite prose framing
 positively install-hook         # install pre-commit guard
 ```
 
 Or use the CLI:
 ```
-positively check docs/ src/     # scan specific paths
-positively apply README.md      # dry-run one file
-positively apply README.md --apply  # rewrite it
+positively check docs/ src/          # scan specific paths
+positively apply README.md           # dry-run one file
+positively apply README.md --apply   # rewrite it
 ```
 
 ## Exit codes (`positively check`)
 
+Bit flags — combine them:
+
 | Code | Meaning |
 |------|---------|
-| 0    | Clean — no violations |
-| 1    | Framing violations found |
-| 2    | Blocker code found |
-| 3    | Both |
+| 0 | Clean |
+| 1 | Framing violations found |
+| 2 | Blocker code found |
+| 4 | Cautions (destructive intent) found |
+
+`3` = framing + blockers, `5` = framing + cautions, `7` = all three.
 
 ## What it rewrites (built-in defaults)
 
-| Negative phrase | Positive replacement |
-|----------------|---------------------|
-| hard gates | milestones |
-| hard gate | milestone |
+**Phrases** (negative → positive):
+
+| Negative | Positive |
+|----------|----------|
+| hard gate(s) | milestone(s) |
 | hard boundary | scope boundary |
 | must refuse | declines |
-| refused | declined |
-| refusal / refusals | escalation / escalations |
+| refused / refusal(s) | declined / escalation(s) |
 | default-deny | allowlist-gated |
 | out of scope | outside current scope |
 | unrecoverable | pending-capture |
+| not recovered | pending capture |
 | not allowed | requires authorization |
 | no longer works | needs refresh |
 
-Single-token meanings: `refuse` → `decline`, `halt` → `pause`, `abandoned` → `deferred`.
+**Words** (softeners — reduce escalation triggers, never invert meaning):
 
-## What it skips (never rewritten)
+| Negative | Positive |
+|----------|----------|
+| refuse / refuses / refusing | decline / declines / declining |
+| halt | pause |
+| abandoned | deferred |
 
-- **Identifiers/constants** in code (configurable via `.positively.toml`)
-- **String literals** inside quotes (configurable)
-- **Technical terms** where "never"/"cannot" is a fact (configurable)
-- **Inline code** in backticks (`identifier`, `output text`)
-- **Fenced code blocks** (```` ``` ```` / `~~~`)
-- **Generic negations** — "never", "do not", "cannot" are never inverted
-- **Safety terms** — `ZipRefused`, path-traversal guards, injection validators are never listed as blockers
+> **Honesty note:** these are *softeners*, not inversions. `refuse → decline`
+> softens the escalation trigger; it does not claim a refusal is a success. Where
+> a status is factually negative (`blocked`, `denied`), the engine leaves it
+> untouched so a human can act on the truth.
+
+## What it never rewrites (protected)
+
+- **Legal terms** — `illegal`, `prohibited`, `copyright`, `license`, `EULA`,
+  `DMCA`, `compliance`, `regulatory`, and similar. Smoothing these away would
+  hide a real compliance signal. They are **non-overridable** via config.
+- **Secret terms** — `password`, `credential`, `secret`, `api_key`,
+  `private key`, tokens, and similar.
+- **Identifiers/constants**, **string literals**, **technical terms** — configurable.
+- **Inline code** (backticks) and **fenced code blocks** — always verbatim.
+- **Generic negations** — `never`, `do not`, `cannot` are never inverted.
+- **Security protections** — path-traversal guards, injection validators,
+  `ZipRefused`-style defenses are never listed as blockers.
+
+## Destructive-intent cautions
+
+`positively check` flags commands that can delete another agent's work or
+destroy data, so a human reviews them before they run:
+
+- `rm -rf`, `rm -r`
+- `git reset --hard`, `git push --force`, `git branch -D`
+- `DROP TABLE`, `TRUNCATE TABLE`, `DELETE FROM`
+- `wipe`, `purge`
+
+These are **detected, never auto-rewritten**. The companion rule for agents:
+*archive, don't delete*.
 
 ## Customisation
 
@@ -87,8 +120,7 @@ Drop a `.positively.toml` at your repository root:
 [words]
 halt = "pause"
 
-exclusions = ["MY_CONSTANT", "SCOPE_GATED", "BLOCKED"]
-string_exclusions = ["halt"]
+exclusions = ["MY_CONSTANT", "BLOCKED"]
 
 [[blockers]]
 pattern = "return\\s+BLOCKED"
@@ -96,10 +128,23 @@ label = "blocked-return"
 severity = "high"
 suggestion = "Route to permissive default"
 
-skip = [".git", ".venv", "out", "dist", "third_party"]
+[[cautions]]
+pattern = "drop\\s+database"
+label = "drop-database"
+severity = "high"
+suggestion = "Archive, don't drop"
 ```
 
-See the included [.positively.toml](.positively.toml) for all knobs.
+All maps merge over the built-in defaults. Attempts to rewrite a protected
+legal/secret term are rejected with a warning. See the included
+[.positively.toml](.positively.toml).
+
+## Supported file types
+
+- **Prose:** Markdown, RST, AsciiDoc, plain text.
+- **Source comments:** Python, C/C++, Go, Rust, JavaScript/TypeScript/JSX, Java,
+  PHP, Ruby, Swift, Kotlin, Shell, CSS/SCSS, YAML, TOML, HTML, SQL, R, Lua, Vim.
+- **Extensionless:** `Makefile`, `Dockerfile`, `Gemfile`, `Justfile`, and similar.
 
 ## Pre-commit hook
 
@@ -107,24 +152,25 @@ See the included [.positively.toml](.positively.toml) for all knobs.
 positively install-hook
 ```
 
-Runs `positively apply --apply` on staged prose/source files and rejects
-commits that introduce detectable blocker code. Idempotent — re-running
-produces zero changes.
+Runs `positively apply --apply` on staged prose/source files, then rejects
+commits that introduce framing, blocker code, or destructive-intent cautions.
 
 ## API
 
 ```python
 from positively import engine, config
 
-# one-off with defaults
-text = "This is a hard gate. It refused."
-result, changes = engine.reverse_framing(text)
-# result = "This is a milestone. It declined."
-
-# custom config
 cfg = config.Config()
 cfg.phrase_map = [("hard gate", "milestone")]
 engine.set_config(cfg)
+
+text = "This is a hard gate."
+result, changes = engine.reverse_framing(text)
+# result = "This is a milestone."
+
+# Validate a custom map for contradictions / protected-term violations
+from positively import patterns
+problems = patterns.validate_maps(cfg.phrase_map, cfg.word_map)
 ```
 
 ## Requirements

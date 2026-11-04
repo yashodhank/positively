@@ -1,10 +1,11 @@
 """Positive-framing check: scan files for negative framing and blocker code.
 
-Exit codes:
+Exit codes are bit flags:
   0 — clean
   1 — framing violations found
   2 — blockers found
-  3 — both
+  4 — cautions (destructive intent) found
+  Combined: e.g. 3 = framing + blockers, 5 = framing + cautions.
 
 Usage:
   positively check [paths...]
@@ -19,6 +20,7 @@ from pathlib import Path
 
 from . import config
 from . import engine
+from . import patterns
 
 
 def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> list[Path]:
@@ -29,7 +31,7 @@ def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> lis
                 continue
             if any(part in cfg.skip_parts for part in p.parts):
                 continue
-            if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts):
+            if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES:
                 paths.append(p)
         return paths
     paths = []
@@ -37,7 +39,8 @@ def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> lis
         p = Path(a)
         if p.is_dir():
             paths.extend(f for f in p.rglob("*") if f.is_file()
-                         and f.suffix.lower() in (cfg.prose_exts | cfg.source_exts))
+                         and (f.suffix.lower() in (cfg.prose_exts | cfg.source_exts)
+                              or f.name in patterns.FILENAMES))
         elif p.is_file():
             paths.append(p)
     return paths
@@ -53,9 +56,13 @@ def main() -> int:
     cfg = config.load_config()
     engine.set_config(cfg)
 
+    for w in cfg.warnings:
+        print(f"WARN config: {w}", file=sys.stderr)
+
     paths = _iter_paths(cfg.root, args, cfg)
     framing_total = 0
     blocker_total = 0
+    caution_total = 0
 
     for p in sorted(paths):
         rep = engine.scan_path(p)
@@ -70,15 +77,22 @@ def main() -> int:
             if not args.quiet:
                 print(f"BLOCKER[{b.severity}] {p}:{b.line}: {b.label}: {b.match.strip()}")
                 print(f"    -> {b.suggestion}")
+        for c in rep.cautions:
+            caution_total += 1
+            if not args.quiet:
+                print(f"CAUTION[{c.severity}] {p}:{c.line}: {c.label}: {c.match.strip()}")
+                print(f"    -> {c.suggestion}")
 
-    print(f"\nScanned {len(paths)} file(s): {framing_total} framing, {blocker_total} blocker(s)")
-    if framing_total and blocker_total:
-        return 3
-    if blocker_total:
-        return 2
+    print(f"\nScanned {len(paths)} file(s): {framing_total} framing, {blocker_total} blocker(s), {caution_total} caution(s)")
+
+    rc = 0
     if framing_total:
-        return 1
-    return 0
+        rc |= 1
+    if blocker_total:
+        rc |= 2
+    if caution_total:
+        rc |= 4
+    return rc
 
 
 if __name__ == "__main__":

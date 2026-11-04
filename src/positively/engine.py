@@ -50,10 +50,11 @@ class BlockerFinding:
 class Report:
     framing: list[FramingViolation] = field(default_factory=list)
     blockers: list[BlockerFinding] = field(default_factory=list)
+    cautions: list[BlockerFinding] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.framing) + len(self.blockers)
+        return len(self.framing) + len(self.blockers) + len(self.cautions)
 
     def __bool__(self) -> bool:
         return self.total > 0
@@ -79,7 +80,10 @@ def _mask_exclusions(text: str, cfg: config.Config) -> tuple[str, dict[str, str]
       is preserved.
     """
     mask: dict[str, str] = {}
-    terms = sorted(cfg.identifier_exclusions | cfg.technical_terms, key=len, reverse=True)
+    terms = sorted(
+        cfg.identifier_exclusions | cfg.technical_terms | cfg.protected_terms,
+        key=len, reverse=True,
+    )
     for i, term in enumerate(terms):
         ph = f"\x00EXCL{i}\x00"
         pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])")
@@ -133,7 +137,7 @@ def is_prose(path: Path) -> bool:
 
 
 def is_source(path: Path) -> bool:
-    return path.suffix.lower() in get_config().source_exts
+    return path.suffix.lower() in get_config().source_exts or path.name in patterns.FILENAMES
 
 
 # ── comment extraction (source files) ───────────────────────────────────────
@@ -156,7 +160,27 @@ _COMMENT_RE: dict[str, list[re.Pattern[str]]] = {
     ".rb": [re.compile(r"#.*$", re.MULTILINE)],
     ".css": [re.compile(r"/\*[\s\S]*?\*/")],
     ".scss": [re.compile(r"//.*$", re.MULTILINE), re.compile(r"/\*[\s\S]*?\*/")],
+    ".yaml": [re.compile(r"#.*$", re.MULTILINE)],
+    ".yml": [re.compile(r"#.*$", re.MULTILINE)],
+    ".toml": [re.compile(r"#.*$", re.MULTILINE)],
+    ".html": [re.compile(r"<!--[\s\S]*?-->")],
+    ".htm": [re.compile(r"<!--[\s\S]*?-->")],
+    ".sql": [re.compile(r"--.*$", re.MULTILINE), re.compile(r"/\*[\s\S]*?\*/")],
+    ".r": [re.compile(r"#.*$", re.MULTILINE)],
+    ".lua": [re.compile(r"--.*$", re.MULTILINE), re.compile(r"--\[\[[\s\S]*?\]\]")],
+    ".vim": [re.compile(r'^\s*".*$', re.MULTILINE)],
+    # extensionless build/config files
+    "Makefile": [re.compile(r"#.*$", re.MULTILINE)],
+    "Dockerfile": [re.compile(r"#.*$", re.MULTILINE)],
+    "Gemfile": [re.compile(r"#.*$", re.MULTILINE)],
+    "Justfile": [re.compile(r"#.*$", re.MULTILINE)],
 }
+
+
+def _comment_patterns(path: Path) -> list[re.Pattern[str]]:
+    if path.name in _COMMENT_RE:
+        return _COMMENT_RE[path.name]
+    return _COMMENT_RE.get(path.suffix.lower(), [])
 
 
 def iter_prose_units(path: Path, text: str):
@@ -203,7 +227,7 @@ def _iter_markdown_prose(text: str):
 
 
 def _iter_source_comments(path: Path, text: str):
-    for pat in _COMMENT_RE.get(path.suffix.lower(), []):
+    for pat in _comment_patterns(path):
         for m in pat.finditer(text):
             seg = m.group(0)
             if seg.strip() in ("", "#", "//", "/*", "*/"):
@@ -244,6 +268,22 @@ def scan_blockers(path: Path, text: str) -> list[BlockerFinding]:
     return findings
 
 
+def scan_cautions(path: Path, text: str) -> list[BlockerFinding]:
+    """Flag destructive-intent commands (deletion, force, data loss).
+
+    Scans whole-file text (prose and source) because destructive commands appear
+    in shell, SQL, Makefiles, and docs. Detection only — never auto-rewritten.
+    """
+    findings: list[BlockerFinding] = []
+    for pat, label, severity, suggestion in get_config().caution_patterns:
+        for m in pat.finditer(text):
+            line = text[: m.start()].count("\n") + 1
+            findings.append(BlockerFinding(
+                str(path), line, m.group(0), label, severity, suggestion,
+            ))
+    return findings
+
+
 def scan_path(path: Path) -> Report:
     rep = Report()
     if not path.is_file():
@@ -252,10 +292,15 @@ def scan_path(path: Path) -> Report:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return rep
+    processed = False
     if is_prose(path) or is_source(path):
         rep.framing = scan_framing(path, text)
+        processed = True
     if is_source(path):
         rep.blockers = scan_blockers(path, text)
+        processed = True
+    if processed:
+        rep.cautions = scan_cautions(path, text)
     return rep
 
 
@@ -308,7 +353,7 @@ def _reverse_outside_inline_code(line: str) -> str:
 
 def _apply_source(path: Path, text: str) -> tuple[str, int]:
     changes = 0
-    for pat in _COMMENT_RE.get(path.suffix.lower(), []):
+    for pat in _comment_patterns(path):
         def repl(m: re.Match[str], _pat=pat) -> str:
             nonlocal changes
             new, _ = reverse_framing(m.group(0))

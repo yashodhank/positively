@@ -2,12 +2,11 @@
 #
 # Copy this file into your repository root and customize it. Every field is
 # OPTIONAL and MERGES into the built-in defaults (see README for the defaults).
-# Commented entries below show the accepted keys and example values.
+# Protected legal/secret terms are NON-OVERRIDABLE and never rewritten.
 
 # ── Exclusions: identifiers / constants never to rewrite ────────────────────
 exclusions = [
     # "MY_CONSTANT",
-    # "SCOPE_GATED",
     # "BLOCKED",
 ]
 
@@ -28,9 +27,10 @@ skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
 
 # ── Extra file extensions (merged into built-in sets) ───────────────────────
 # prose_exts = [".md", ".markdown", ".txt", ".rst", ".adoc"]
-# source_exts = [".py", ".c", ".h", ".sh", ".m4", ".js", ".jsx", ".ts", ".tsx", ".java", ".php", ".rs", ".go", ".swift", ".kt", ".rb", ".css", ".scss"]
+# source_exts = [".py", ".c", ".h", ".sh", ".m4", ".js", ".jsx", ".ts", ".tsx", ".java", ".php", ".rs", ".go", ".swift", ".kt", ".rb", ".css", ".scss", ".yaml", ".yml", ".toml", ".html", ".sql", ".r", ".lua"]
 
 # ── Phrase overrides (negative → positive, case-insensitive, longest-first) ─
+# Protected legal/secret terms cannot be used here (they are ignored + warned).
 [phrases]
 # "hard gates" = "milestones"
 # "must refuse" = "declines"
@@ -39,17 +39,24 @@ skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
 # "unrecoverable" = "pending-capture"
 # "not allowed" = "requires authorization"
 
-# ── Word overrides (single-token, case-preserving) ──────────────────────────
+# ── Word overrides (single-token softeners, case-preserving) ────────────────
 [words]
 # refuse = "decline"
 # halt = "pause"
 # abandoned = "deferred"
 
 # ── Blocker patterns (code that literally blocks a feature path) ────────────
-# Each entry: regex + label + severity + suggestion. Detection only by default;
-# the `positively check` command reports them.
+# Detection only; reported by `positively check`.
 # [[blockers]]
 # pattern = "return\\s+BLOCKED"
 # label = "blocked-return"
 # severity = "high"
 # suggestion = "Route to permissive default"
+
+# ── Caution patterns (destructive intent: deletion / force / data loss) ─────
+# Detection only; never auto-rewritten. Extends the built-in caution set.
+# [[cautions]]
+# pattern = "drop\\s+database"
+# label = "drop-database"
+# severity = "high"
+# suggestion = "Archive, don't drop"

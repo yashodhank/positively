@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import config
 from . import engine
+from . import patterns
 
 AUDIT_LOG = "positively-audit.md"
 
@@ -49,7 +50,7 @@ def main() -> int:
                 continue
             if any(part in cfg.skip_parts for part in p.parts):
                 continue
-            if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts):
+            if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES:
                 paths.append(p)
     else:
         for a in args.paths:

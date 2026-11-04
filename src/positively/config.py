@@ -59,15 +59,37 @@ def load_config() -> Config:
 
     # Phrases/words MERGE into the built-in defaults. A config entry with the
     # same negative phrase/word overrides the built-in; entries only in the
-    # config extend it.
+    # config extend it. Entries that would corrupt meaning or touch a
+    # protected legal/secret term are rejected with a warning.
     if isinstance(data.get("phrases"), dict):
         phrase_map = list(patterns.PHRASE_MAP)
         for neg, pos in data["phrases"].items():
+            if not isinstance(pos, str):
+                cfg.warnings.append(f"ignored phrase '{neg}': replacement must be a string")
+                continue
+            if neg.lower() in patterns.PROTECTED_TERMS or pos.lower() in patterns.PROTECTED_TERMS:
+                cfg.warnings.append(f"ignored phrase '{neg}': protected term (legal/secret) may not be rewritten")
+                continue
+            if neg.lower() == pos.lower():
+                cfg.warnings.append(f"ignored phrase '{neg}': maps to itself")
+                continue
             phrase_map = [(p, r) for p, r in phrase_map if p != neg]
             phrase_map.append((neg, pos))
         cfg.phrase_map = phrase_map
     if isinstance(data.get("words"), dict):
-        cfg.word_map = {**patterns.WORD_MAP, **data["words"]}
+        word_map = dict(patterns.WORD_MAP)
+        for neg, pos in data["words"].items():
+            if not isinstance(pos, str):
+                cfg.warnings.append(f"ignored word '{neg}': replacement must be a string")
+                continue
+            if neg.lower() in patterns.PROTECTED_TERMS or pos.lower() in patterns.PROTECTED_TERMS:
+                cfg.warnings.append(f"ignored word '{neg}': protected term (legal/secret) may not be rewritten")
+                continue
+            if neg.lower() == pos.lower():
+                cfg.warnings.append(f"ignored word '{neg}': maps to itself")
+                continue
+            word_map[neg] = pos
+        cfg.word_map = word_map
 
     # Exclusions / skip lists extend the built-in sets.
     if isinstance(data.get("exclusions"), list):
@@ -84,14 +106,19 @@ def load_config() -> Config:
         cfg.source_exts = set(patterns.SOURCE_EXTS) | set(data["source_exts"])
 
     if isinstance(data.get("blockers"), list):
-        cfg.blocker_patterns = list(patterns.BLOCKER_PATTERNS) + _parse_blockers(data["blockers"])
+        cfg.blocker_patterns = list(patterns.BLOCKER_PATTERNS) + _parse_patterns(data["blockers"])
+    if isinstance(data.get("cautions"), list):
+        cfg.caution_patterns = list(patterns.CAUTION_PATTERNS) + _parse_patterns(data["cautions"])
     return cfg
 
 
-def _parse_blockers(raw: list[dict]) -> list[tuple[re.Pattern[str], str, str, str]]:
+def _parse_patterns(raw: list[dict]) -> list[tuple[re.Pattern[str], str, str, str]]:
     out: list[tuple[re.Pattern[str], str, str, str]] = []
     for entry in raw:
-        pat = re.compile(entry["pattern"])
+        try:
+            pat = re.compile(entry["pattern"])
+        except (KeyError, re.error):
+            continue
         label = entry.get("label", "")
         severity = entry.get("severity", "medium")
         suggestion = entry.get("suggestion", "")
@@ -108,12 +135,14 @@ class Config:
         self._phrase_map: list[tuple[str, str]] | None = None
         self._word_map: dict[str, str] | None = None
         self._blocker_patterns: list[tuple[re.Pattern[str], str, str, str]] | None = None
+        self._caution_patterns: list[tuple[re.Pattern[str], str, str, str]] | None = None
         self._identifier_exclusions: set[str] | None = None
         self._string_exclusions: set[str] | None = None
         self._technical_terms: set[str] | None = None
         self._skip_parts: frozenset[str] | None = None
         self._prose_exts: set[str] | None = None
         self._source_exts: set[str] | None = None
+        self.warnings: list[str] = []
 
     @property
     def root(self) -> Path:
@@ -122,6 +151,10 @@ class Config:
     @property
     def config_path(self) -> Path | None:
         return self._config_path
+
+    @property
+    def protected_terms(self) -> frozenset[str]:
+        return patterns.PROTECTED_TERMS
 
     @property
     def phrase_map(self) -> list[tuple[str, str]]:
@@ -146,6 +179,14 @@ class Config:
     @blocker_patterns.setter
     def blocker_patterns(self, value: list[tuple[re.Pattern[str], str, str, str]]) -> None:
         self._blocker_patterns = value
+
+    @property
+    def caution_patterns(self) -> list[tuple[re.Pattern[str], str, str, str]]:
+        return self._caution_patterns if self._caution_patterns is not None else patterns.CAUTION_PATTERNS
+
+    @caution_patterns.setter
+    def caution_patterns(self, value: list[tuple[re.Pattern[str], str, str, str]]) -> None:
+        self._caution_patterns = value
 
     @property
     def identifier_exclusions(self) -> set[str]:

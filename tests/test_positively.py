@@ -167,5 +167,119 @@ class AuditLogTest(unittest.TestCase):
             self.assertIn("- a.md: framing x1\n", text)
 
 
+class MapValidationTest(unittest.TestCase):
+    """Regression guard for the 7.60-class bug: output words must never re-enter
+    the negative set, and no map may touch a protected term or map to itself."""
+
+    def test_no_output_is_also_negative(self):
+        problems = patterns.validate_maps(patterns.PHRASE_MAP, patterns.WORD_MAP)
+        self.assertEqual(problems, [], f"map has contradictions: {problems}")
+
+    def test_self_map_rejected(self):
+        problems = patterns.validate_maps([("foo", "foo")], {})
+        self.assertTrue(any("itself" in p for p in problems))
+
+    def test_protected_term_negative_rejected(self):
+        problems = patterns.validate_maps([("illegal", "acceptable")], {})
+        self.assertTrue(any("illegal" in p for p in problems))
+
+    def test_protected_term_output_rejected(self):
+        problems = patterns.validate_maps([("fine", "illegal")], {})
+        self.assertTrue(any("illegal" in p for p in problems))
+
+
+class ProtectedTermTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = config.Config(root=Path(tempfile.gettempdir()))
+        engine.set_config(self.cfg)
+
+    def test_legal_term_never_rewritten(self):
+        out, changes = engine.reverse_framing("this is illegal and prohibited")
+        self.assertIn("illegal", out)
+        self.assertIn("prohibited", out)
+        self.assertEqual(changes, [])
+
+    def test_secret_term_never_rewritten(self):
+        out, _ = engine.reverse_framing("the password is a secret")
+        self.assertIn("password", out)
+        self.assertIn("secret", out)
+
+    def test_config_cannot_override_protected_term(self):
+        cfg = config.Config(root=Path(tempfile.gettempdir()))
+        cfg.phrase_map = list(patterns.PHRASE_MAP) + [("illegal", "acceptable")]
+        engine.set_config(cfg)
+        out, _ = engine.reverse_framing("this is illegal")
+        self.assertIn("illegal", out)
+        self.assertNotIn("acceptable", out)
+
+
+class CautionTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = config.Config(root=Path(tempfile.gettempdir()))
+        engine.set_config(self.cfg)
+
+    def _scan(self, text):
+        return engine.scan_cautions(Path("x.sh"), text)
+
+    def test_detect_rm_rf(self):
+        rep = self._scan("rm -rf /tmp/build")
+        self.assertTrue(rep)
+        self.assertEqual(rep[0].label, "destructive-remove")
+
+    def test_detect_force_push(self):
+        rep = self._scan("git push --force origin main")
+        self.assertTrue(any("force-push" == r.label for r in rep))
+
+    def test_detect_hard_reset(self):
+        rep = self._scan("git reset --hard HEAD~1")
+        self.assertTrue(any("hard-reset" == r.label for r in rep))
+
+    def test_detect_drop_table(self):
+        rep = self._scan("DROP TABLE users")
+        self.assertTrue(any("drop-table" == r.label for r in rep))
+
+    def test_detect_delete_from(self):
+        rep = self._scan("DELETE FROM customers WHERE id = 1")
+        self.assertTrue(any("delete-from" == r.label for r in rep))
+
+    def test_no_false_positive_on_archive(self):
+        rep = self._scan("git archive --format=tar HEAD")
+        self.assertFalse(rep)
+
+
+class NewExtensionTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = config.Config(root=Path(tempfile.gettempdir()))
+        engine.set_config(self.cfg)
+
+    def test_yaml_comment_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "config.yaml"
+            p.write_text("# This is a hard gate\nkey: value\n")
+            out, n = engine.apply_framing(p, p.read_text())
+            self.assertIn("milestone", out)
+            self.assertGreater(n, 0)
+
+    def test_html_comment_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "index.html"
+            p.write_text("<!-- refused by the gate -->\n")
+            out, n = engine.apply_framing(p, p.read_text())
+            self.assertIn("declined", out)
+
+    def test_makefile_comment_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "Makefile"
+            p.write_text("# this is a hard gate\nall:\n\t@echo hi\n")
+            out, n = engine.apply_framing(p, p.read_text())
+            self.assertIn("milestone", out)
+
+    def test_full_map_idempotent(self):
+        sample = " ".join(neg for neg, _ in patterns.PHRASE_MAP) + " " + " ".join(patterns.WORD_MAP)
+        once, _ = engine.reverse_framing(sample)
+        twice, _ = engine.reverse_framing(once)
+        self.assertEqual(once, twice)
+
+
 if __name__ == "__main__":
     unittest.main()
