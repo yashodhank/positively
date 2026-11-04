@@ -2,47 +2,43 @@
 # Positive-framing pre-commit hook.
 #
 # Auto-reverses negative framing in staged changes and blocks commits that
-# introduce blocker code (unless the blocker pattern is explicitly configured).
+# introduce framing, blocker code, or destructive-intent cautions.
 #
 # Install:
-#   cp .positively/pre-commit-hook.sh .git/hooks/pre-commit
-# Or use the built-in install command:
 #   positively install-hook
+# or:
+#   cp src/positively/pre-commit-hook.sh .git/hooks/pre-commit
+#
+# The hook delegates file-type and skip decisions to the tool itself, so the
+# supported extension set and skip rules stay in one place (no duplicated list).
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO"
 
+# Skip silently if positively is not installed on the default python3.
+if ! python3 -c "import positively" >/dev/null 2>&1; then
+  exit 0
+fi
+
 STAGED=()
 while IFS= read -r -d '' f; do
-  if printf '%s' "$f" | grep -qE '\.(md|markdown|txt|rst|adoc|py|c|h|sh|m4|js|jsx|ts|tsx|java|php|rs|go|swift|kt|rb|css|scss)$' &&
-     ! printf '%s' "$f" | grep -qE '^(positively/|tests/)'; then
-    STAGED+=("$f")
-  fi
+  STAGED+=("$f")
 done < <(git diff --cached --name-only -z --diff-filter=ACM)
 
 if [ "${#STAGED[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# 1. Auto-reverse framing on staged files (idempotent).
+# Auto-reverse framing on staged files (the tool filters type + skip rules).
 python3 -m positively.apply --apply -- "${STAGED[@]}" >/dev/null
 
 # Re-stage anything the engine changed.
 for f in "${STAGED[@]}"; do
-  if git diff --quiet -- "$f"; then
-    :
-  else
+  if ! git diff --quiet -- "$f"; then
     git add -- "$f"
   fi
 done
 
-# 2. Block commits that contain blocker code.
-if python3 -m positively.check --quiet -- "${STAGED[@]}"; then
-  exit 0
-else
-  rc=$?
-  echo "positively: blocker or framing issue detected (exit $rc)" >&2
-  echo "Run: python3 -m positively.check -- \"${STAGED[*]}\"" >&2
-  exit "$rc"
-fi
+# Block commits that still contain framing, blockers, or destructive intent.
+python3 -m positively.check --quiet -- "${STAGED[@]}"

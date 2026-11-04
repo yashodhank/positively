@@ -23,10 +23,6 @@ def get_config() -> config.Config:
     return _CFG
 
 
-PROSE_EXTS = patterns.PROSE_EXTS
-SOURCE_EXTS = patterns.SOURCE_EXTS
-
-
 @dataclass
 class FramingViolation:
     path: str
@@ -60,15 +56,46 @@ class Report:
         return self.total > 0
 
 
-def _build_phrases(cfg: config.Config) -> list[tuple[re.Pattern[str], str]]:
-    return patterns.build_phrase_patterns(cfg.phrase_map)
+# ── file classification ─────────────────────────────────────────────────────
+
+def is_prose(path: Path) -> bool:
+    return path.suffix.lower() in get_config().prose_exts
 
 
-def _build_words(cfg: config.Config) -> list[tuple[re.Pattern[str], str]]:
-    return patterns.build_word_patterns(cfg.word_map)
+def is_source(path: Path) -> bool:
+    return path.suffix.lower() in get_config().source_exts or path.name in patterns.FILENAMES
+
+
+def should_skip(path: Path, cfg: config.Config | None = None) -> bool:
+    """True if a path must never be scanned or rewritten.
+
+    Covers legal source-of-truth documents (SKIP_FILENAMES) and any path part
+    in the configured skip set (e.g. `.git`, `.venv`, `node_modules`, `legal`).
+    """
+    cfg = cfg or get_config()
+    if path.name in patterns.SKIP_FILENAMES:
+        return True
+    return any(part in cfg.skip_parts for part in path.parts)
 
 
 # ── framing replacement in prose ────────────────────────────────────────────
+
+def _exclusion_spans(text: str, cfg: config.Config) -> list[tuple[int, int]]:
+    """Absolute spans of terms that must never be rewritten (identifiers,
+    secret/technical terms, quoted string literals). Mirrors ``_mask_exclusions``.
+    """
+    spans: list[tuple[int, int]] = []
+    terms = sorted(cfg.identifier_exclusions | cfg.technical_terms | cfg.secret_terms, key=len, reverse=True)
+    for term in terms:
+        pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(term) + r"(?![A-Za-z0-9_])")
+        for m in pat.finditer(text):
+            spans.append((m.start(), m.end()))
+    for term in sorted(cfg.string_exclusions, key=len, reverse=True):
+        pat = re.compile(r"([\"'])" + re.escape(term) + r"(\1)")
+        for m in pat.finditer(text):
+            spans.append((m.start(), m.end()))
+    return spans
+
 
 def _mask_exclusions(text: str, cfg: config.Config) -> tuple[str, dict[str, str]]:
     """Temporarily mask excluded identifiers/strings/technical terms so they
@@ -105,39 +132,63 @@ def _unmask(text: str, mask: dict[str, str]) -> str:
     return text
 
 
-def reverse_framing(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Apply phrase+word reversal to prose text. Returns (new_text, changes)."""
-    cfg = get_config()
-    changes: list[tuple[str, str]] = []
-    text, mask = _mask_exclusions(text, cfg)
-    for pat, repl in _build_phrases(cfg):
-        text, n = pat.subn(repl, text)
-        if n:
-            changes.append((pat.pattern, repl))
-    for pat, repl in _build_words(cfg):
-        text, n = pat.subn(repl, text)
-        if n:
-            changes.append((pat.pattern, repl))
-    text = _unmask(text, mask)
-    return text, changes
-
-
 def _case_preserve(repl: str, match: str) -> str:
     if match.isupper():
         return repl.upper()
+    if match.istitle():
+        return repl.title()
     if match[:1].isupper():
         return repl[:1].upper() + repl[1:]
     return repl
 
 
-# ── file classification ─────────────────────────────────────────────────────
+def _sub_preserve(pat: re.Pattern[str], repl: str, text: str) -> tuple[str, int]:
+    def _repl(m: re.Match[str]) -> str:
+        return _case_preserve(repl, m.group(0))
+    return pat.subn(_repl, text)
 
-def is_prose(path: Path) -> bool:
-    return path.suffix.lower() in get_config().prose_exts
+
+def reverse_framing(text: str) -> tuple[str, int]:
+    """Apply phrase+word reversal to prose text.
+
+    Returns (new_text, match_count) where match_count is the number of
+    individual substitutions applied.
+    """
+    cfg = get_config()
+    total = 0
+    text, mask = _mask_exclusions(text, cfg)
+    for pat, repl in cfg.compiled_phrases():
+        text, n = _sub_preserve(pat, repl, text)
+        total += n
+    for pat, repl in cfg.compiled_words():
+        text, n = _sub_preserve(pat, repl, text)
+        total += n
+    text = _unmask(text, mask)
+    return text, total
 
 
-def is_source(path: Path) -> bool:
-    return path.suffix.lower() in get_config().source_exts or path.name in patterns.FILENAMES
+def _find_framing_matches(text: str, cfg: config.Config) -> list[tuple[int, int, str, str, str]]:
+    """Return (start, end, match, replacement, pattern) for every rewrite the
+    engine would apply to ``text``, with the same non-overlap semantics as
+    ``reverse_framing`` (longest phrase first, then words; exclusions skipped).
+    Positions are absolute character offsets into ``text``.
+    """
+    excluded = _exclusion_spans(text, cfg)
+    consumed = [False] * len(text)
+    matches: list[tuple[int, int, str, str, str]] = []
+
+    def _overlaps_excluded(s: int, e: int) -> bool:
+        return any(not (e <= xs or s >= xe) for xs, xe in excluded)
+
+    for pat, repl in cfg.compiled_phrases() + cfg.compiled_words():
+        for m in pat.finditer(text):
+            s, e = m.start(), m.end()
+            if any(consumed[s:e]) or _overlaps_excluded(s, e):
+                continue
+            matches.append((s, e, m.group(0), _case_preserve(repl, m.group(0)), pat.pattern))
+            for i in range(s, e):
+                consumed[i] = True
+    return matches
 
 
 # ── comment extraction (source files) ───────────────────────────────────────
@@ -169,7 +220,6 @@ _COMMENT_RE: dict[str, list[re.Pattern[str]]] = {
     ".r": [re.compile(r"#.*$", re.MULTILINE)],
     ".lua": [re.compile(r"--.*$", re.MULTILINE), re.compile(r"--\[\[[\s\S]*?\]\]")],
     ".vim": [re.compile(r'^\s*".*$', re.MULTILINE)],
-    # extensionless build/config files
     "Makefile": [re.compile(r"#.*$", re.MULTILINE)],
     "Dockerfile": [re.compile(r"#.*$", re.MULTILINE)],
     "Gemfile": [re.compile(r"#.*$", re.MULTILINE)],
@@ -242,18 +292,14 @@ _INLINE_CODE = re.compile(r"(`+).+?\1")
 
 def scan_framing(path: Path, text: str) -> list[FramingViolation]:
     violations: list[FramingViolation] = []
-    prose = is_prose(path)
+    cfg = get_config()
     for seg_start, seg_end, seg in iter_prose_units(path, text):
-        scan = _INLINE_CODE.sub(lambda m: " " * len(m.group(0)), seg) if prose else seg
-        new_seg, changes = reverse_framing(scan)
-        if new_seg != scan:
-            for pat_str, repl in changes:
-                m = re.search(pat_str, scan, re.IGNORECASE)
-                if m:
-                    line = text[: seg_start + m.start()].count("\n") + 1
-                    violations.append(FramingViolation(
-                        str(path), line, m.group(0), repl, pat_str,
-                    ))
+        scan = _INLINE_CODE.sub(lambda m: " " * len(m.group(0)), seg)
+        for s, e, match, repl, pat_str in _find_framing_matches(scan, cfg):
+            line = text[: seg_start + s].count("\n") + 1
+            violations.append(FramingViolation(
+                str(path), line, match, repl, pat_str,
+            ))
     return violations
 
 
@@ -286,7 +332,7 @@ def scan_cautions(path: Path, text: str) -> list[BlockerFinding]:
 
 def scan_path(path: Path) -> Report:
     rep = Report()
-    if path.name in patterns.SKIP_FILENAMES or not path.is_file():
+    if should_skip(path) or not path.is_file():
         return rep
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -307,8 +353,8 @@ def scan_path(path: Path) -> Report:
 # ── rewrite ─────────────────────────────────────────────────────────────────
 
 def apply_framing(path: Path, text: str) -> tuple[str, int]:
-    """Rewrite framing in place. Returns (new_text, change_count)."""
-    if path.name in patterns.SKIP_FILENAMES:
+    """Rewrite framing in place. Returns (new_text, match_count)."""
+    if should_skip(path):
         return text, 0
     if is_prose(path):
         return _apply_markdown(path, text)
@@ -334,23 +380,30 @@ def _apply_markdown(path: Path, text: str) -> tuple[str, int]:
             out.append(line)
             continue
         if not in_fence:
-            new_line = _reverse_outside_inline_code(line)
-            if new_line != line:
-                changes += 1
+            new_line, n = _reverse_outside_inline_code(line)
+            changes += n
             out.append(new_line)
         else:
             out.append(line)
     return "".join(out), changes
 
 
-def _reverse_outside_inline_code(line: str) -> str:
-    """Inline code is verbatim (identifiers, file names, quoted program output): leave it as is."""
-    parts, pos = [], 0
+def _reverse_outside_inline_code(line: str) -> tuple[str, int]:
+    """Reverse non-inline-code spans of a line; backtick spans stay verbatim.
+
+    Returns (new_line, match_count)."""
+    parts: list[str] = []
+    pos = 0
+    count = 0
     for m in _INLINE_CODE.finditer(line):
-        parts += [reverse_framing(line[pos:m.start()])[0], m.group(0)]
+        seg, n = reverse_framing(line[pos:m.start()])
+        parts += [seg, m.group(0)]
+        count += n
         pos = m.end()
-    parts.append(reverse_framing(line[pos:])[0])
-    return "".join(parts)
+    seg, n = reverse_framing(line[pos:])
+    parts.append(seg)
+    count += n
+    return "".join(parts), count
 
 
 def _apply_source(path: Path, text: str) -> tuple[str, int]:
@@ -358,9 +411,8 @@ def _apply_source(path: Path, text: str) -> tuple[str, int]:
     for pat in _comment_patterns(path):
         def repl(m: re.Match[str], _pat=pat) -> str:
             nonlocal changes
-            new, _ = reverse_framing(m.group(0))
-            if new != m.group(0):
-                changes += 1
+            new, n = _reverse_outside_inline_code(m.group(0))
+            changes += n
             return new
         text = pat.sub(repl, text)
     return text, changes

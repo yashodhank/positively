@@ -23,39 +23,29 @@ from . import engine
 from . import patterns
 
 
+def _is_processable(p: Path, cfg: config.Config) -> bool:
+    return p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES
+
+
 def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> list[Path]:
+    paths: list[Path] = []
     if args.all:
-        paths: list[Path] = []
         for p in repo.rglob("*"):
-            if not p.is_file():
-                continue
-            if any(part in cfg.skip_parts for part in p.parts):
-                continue
-            if p.name in patterns.SKIP_FILENAMES:
-                continue
-            if p.suffix.lower() in (cfg.prose_exts | cfg.source_exts) or p.name in patterns.FILENAMES:
+            if p.is_file() and not engine.should_skip(p, cfg) and _is_processable(p, cfg):
                 paths.append(p)
         return paths
-    paths = []
     for a in args.paths:
         p = Path(a)
         if p.is_dir():
-            paths.extend(f for f in p.rglob("*") if f.is_file()
-                         and f.name not in patterns.SKIP_FILENAMES
-                         and (f.suffix.lower() in (cfg.prose_exts | cfg.source_exts)
-                              or f.name in patterns.FILENAMES))
+            for f in p.rglob("*"):
+                if f.is_file() and not engine.should_skip(f, cfg) and _is_processable(f, cfg):
+                    paths.append(f)
         elif p.is_file():
             paths.append(p)
     return paths
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Scan for negative framing and blockers")
-    ap.add_argument("paths", nargs="*", help="files or dirs to scan")
-    ap.add_argument("--all", action="store_true", help="scan the whole repo")
-    ap.add_argument("--quiet", "-q", action="store_true", help="only print summary")
-    args = ap.parse_args()
-
+def run(args: argparse.Namespace) -> int:
     cfg = config.load_config()
     engine.set_config(cfg)
 
@@ -96,6 +86,14 @@ def main() -> int:
     if caution_total:
         rc |= 4
     return rc
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Scan for negative framing and blockers")
+    ap.add_argument("paths", nargs="*", help="files or dirs to scan")
+    ap.add_argument("--all", action="store_true", help="scan the whole repo")
+    ap.add_argument("--quiet", "-q", action="store_true", help="only print summary")
+    return run(ap.parse_args())
 
 
 if __name__ == "__main__":

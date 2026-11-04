@@ -177,8 +177,7 @@ SKIP_FILENAMES: frozenset[str] = frozenset({
 })
 
 SKIP_PARTS: frozenset[str] = frozenset({
-    ".git", ".venv", "node_modules", "__pycache__", "positively", "tests",
-    "legal",
+    ".git", ".venv", "node_modules", "__pycache__", "legal",
 })
 
 

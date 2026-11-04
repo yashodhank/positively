@@ -13,6 +13,84 @@ from pathlib import Path
 
 from . import patterns
 
+# Recognised top-level keys. Unknown keys are ignored with a warning so a typo
+# (e.g. ``exclusion`` instead of ``exclusions``) does not silently no-op.
+KNOWN_KEYS = frozenset({
+    "phrases", "words", "exclusions", "string_exclusions", "technical_terms",
+    "skip", "prose_exts", "source_exts", "blockers", "cautions",
+})
+
+# Written by `positively init`. Kept in sync with the bundled .positively.toml.
+DEFAULT_CONFIG_TEMPLATE = """\
+# .positively.toml — positive-framing configuration
+#
+# Copy this file into your repository root and customize it. Every field is
+# OPTIONAL and MERGES into the built-in defaults (see README for the defaults).
+# Secret terms are NON-OVERRIDABLE and never rewritten.
+
+# ── Exclusions: identifiers / constants never to rewrite ────────────────────
+exclusions = [
+    # "MY_CONSTANT",
+    # "BLOCKED",
+]
+
+# ── String literals (JSON/API contract values) never to rewrite ─────────────
+string_exclusions = [
+    # "halt",
+    # "refused",
+]
+
+# ── Technical terms where "never"/"cannot" is a fact, not framing ───────────
+technical_terms = [
+    # "never_type",
+    # "cannot parse",
+]
+
+# ── Path parts skipped when walking the repo ────────────────────────────────
+skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
+
+# ── Extra file extensions (merged into built-in sets) ───────────────────────
+# prose_exts = [".md", ".markdown", ".txt", ".rst", ".adoc"]
+# source_exts = [".py", ".c", ".h", ".sh", ".m4", ".js", ".jsx", ".ts", ".tsx", ".java", ".php", ".rs", ".go", ".swift", ".kt", ".rb", ".css", ".scss", ".yaml", ".yml", ".toml", ".html", ".sql", ".r", ".lua"]
+
+# ── Phrase overrides (negative → positive, case-insensitive, longest-first) ─
+# Secret terms cannot be used here (they are ignored + warned).
+# Map any term to "" to remove it entirely.
+[phrases]
+# "hard gates" = "milestones"
+# "must refuse" = "declines"
+# "refused" = "declined"
+# "out of scope" = "outside current scope"
+# "unrecoverable" = "pending-capture"
+# "not allowed" = "requires authorization"
+# "illegal" = "permitted"
+# "prohibited" = "permitted"
+# "copyright infringement" = "cleared for use"
+# "blocked" = ""            # remove a term entirely
+
+# ── Word overrides (single-token softeners, case-preserving) ────────────────
+[words]
+# refuse = "decline"
+# halt = "pause"
+# abandoned = "deferred"
+
+# ── Blocker patterns (code that literally blocks a feature path) ────────────
+# Detection only; reported by `positively check`.
+# [[blockers]]
+# pattern = "return\\s+BLOCKED"
+# label = "blocked-return"
+# severity = "high"
+# suggestion = "Route to permissive default"
+
+# ── Caution patterns (destructive intent: deletion / force / data loss) ─────
+# Detection only; never auto-rewritten. Extends the built-in caution set.
+# [[cautions]]
+# pattern = "drop\\s+database"
+# label = "drop-database"
+# severity = "high"
+# suggestion = "Archive, don't drop"
+"""
+
 
 def _find_root() -> Path:
     env = os.environ.get("POSITIVELY_ROOT", "")
@@ -49,18 +127,30 @@ def load_config() -> Config:
 
     try:
         import tomllib  # Python ≥3.11
-    except ImportError:
-        return Config(root=root)
+    except ImportError:  # pragma: no cover — requires-python is >=3.11
+        return Config(root=root, config_path=config_path)
 
-    with config_path.open("rb") as f:
-        data = tomllib.load(f)
+    try:
+        with config_path.open("rb") as f:
+            data = tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError, ValueError) as e:
+        cfg = Config(root=root, config_path=config_path)
+        cfg.warnings.append(f"could not parse {config_path}: {e}; using defaults")
+        return cfg
+
+    if not isinstance(data, dict):
+        cfg = Config(root=root, config_path=config_path)
+        cfg.warnings.append(f"{config_path}: expected a table of keys, got {type(data).__name__}")
+        return cfg
 
     cfg = Config(root=root, config_path=config_path)
 
+    for key in data:
+        if key not in KNOWN_KEYS:
+            cfg.warnings.append(f"unknown config key '{key}' (ignored)")
+
     # Phrases/words MERGE into the built-in defaults. A config entry with the
-    # same negative phrase/word overrides the built-in; entries only in the
-    # config extend it. Entries that would corrupt meaning or touch a
-    # protected legal/secret term are rejected with a warning.
+    # same negative phrase/word (case-insensitively) overrides the built-in.
     if isinstance(data.get("phrases"), dict):
         phrase_map = list(patterns.PHRASE_MAP)
         for neg, pos in data["phrases"].items():
@@ -73,7 +163,7 @@ def load_config() -> Config:
             if neg.lower() == pos.lower():
                 cfg.warnings.append(f"ignored phrase '{neg}': maps to itself")
                 continue
-            phrase_map = [(p, r) for p, r in phrase_map if p != neg]
+            phrase_map = [(p, r) for p, r in phrase_map if p.lower() != neg.lower()]
             phrase_map.append((neg, pos))
         cfg.phrase_map = phrase_map
     if isinstance(data.get("words"), dict):
@@ -106,28 +196,44 @@ def load_config() -> Config:
         cfg.source_exts = set(patterns.SOURCE_EXTS) | set(data["source_exts"])
 
     if isinstance(data.get("blockers"), list):
-        cfg.blocker_patterns = list(patterns.BLOCKER_PATTERNS) + _parse_patterns(data["blockers"])
+        parsed, warns = _parse_patterns(data["blockers"], "blocker")
+        cfg.warnings.extend(warns)
+        cfg.blocker_patterns = list(patterns.BLOCKER_PATTERNS) + parsed
     if isinstance(data.get("cautions"), list):
-        cfg.caution_patterns = list(patterns.CAUTION_PATTERNS) + _parse_patterns(data["cautions"])
+        parsed, warns = _parse_patterns(data["cautions"], "caution")
+        cfg.warnings.extend(warns)
+        cfg.caution_patterns = list(patterns.CAUTION_PATTERNS) + parsed
+
+    # Surface any circular / secret-violation maps introduced by the config.
+    cfg.warnings.extend(patterns.validate_maps(cfg.phrase_map, cfg.word_map))
     return cfg
 
 
-def _parse_patterns(raw: list[dict]) -> list[tuple[re.Pattern[str], str, str, str]]:
+def _parse_patterns(raw: list, kind: str) -> tuple[list[tuple[re.Pattern[str], str, str, str]], list[str]]:
     out: list[tuple[re.Pattern[str], str, str, str]] = []
+    warns: list[str] = []
     for entry in raw:
+        if not isinstance(entry, dict) or "pattern" not in entry:
+            warns.append(f"ignored {kind}: missing 'pattern' key")
+            continue
         try:
             pat = re.compile(entry["pattern"])
-        except (KeyError, re.error):
+        except re.error as e:
+            warns.append(f"ignored {kind}: invalid regex '{entry['pattern']}': {e}")
             continue
         label = entry.get("label", "")
         severity = entry.get("severity", "medium")
         suggestion = entry.get("suggestion", "")
         out.append((pat, label, severity, suggestion))
-    return out
+    return out, warns
 
 
 class Config:
-    """Active configuration — built-ins overlaid with project-local overrides."""
+    """Active configuration — built-ins overlaid with project-local overrides.
+
+    Compiled phrase/word patterns are cached and invalidated when the
+    corresponding map is replaced via its setter.
+    """
 
     def __init__(self, root: Path | None = None, config_path: Path | None = None):
         self._root = root or _find_root()
@@ -142,8 +248,11 @@ class Config:
         self._skip_parts: frozenset[str] | None = None
         self._prose_exts: set[str] | None = None
         self._source_exts: set[str] | None = None
+        self._compiled_phrases: list[tuple[re.Pattern[str], str]] | None = None
+        self._compiled_words: list[tuple[re.Pattern[str], str]] | None = None
         self.warnings: list[str] = []
 
+    # ── roots / identity ────────────────────────────────────────────────────
     @property
     def root(self) -> Path:
         return self._root
@@ -156,6 +265,7 @@ class Config:
     def secret_terms(self) -> frozenset[str]:
         return patterns.SECRET_TERMS
 
+    # ── phrase / word maps (with compiled caching) ──────────────────────────
     @property
     def phrase_map(self) -> list[tuple[str, str]]:
         return self._phrase_map if self._phrase_map is not None else patterns.PHRASE_MAP
@@ -163,6 +273,7 @@ class Config:
     @phrase_map.setter
     def phrase_map(self, value: list[tuple[str, str]]) -> None:
         self._phrase_map = value
+        self._compiled_phrases = None
 
     @property
     def word_map(self) -> dict[str, str]:
@@ -171,7 +282,19 @@ class Config:
     @word_map.setter
     def word_map(self, value: dict[str, str]) -> None:
         self._word_map = value
+        self._compiled_words = None
 
+    def compiled_phrases(self) -> list[tuple[re.Pattern[str], str]]:
+        if self._compiled_phrases is None:
+            self._compiled_phrases = patterns.build_phrase_patterns(self.phrase_map)
+        return self._compiled_phrases
+
+    def compiled_words(self) -> list[tuple[re.Pattern[str], str]]:
+        if self._compiled_words is None:
+            self._compiled_words = patterns.build_word_patterns(self.word_map)
+        return self._compiled_words
+
+    # ── blocker / caution patterns ──────────────────────────────────────────
     @property
     def blocker_patterns(self) -> list[tuple[re.Pattern[str], str, str, str]]:
         return self._blocker_patterns if self._blocker_patterns is not None else patterns.BLOCKER_PATTERNS
@@ -188,6 +311,7 @@ class Config:
     def caution_patterns(self, value: list[tuple[re.Pattern[str], str, str, str]]) -> None:
         self._caution_patterns = value
 
+    # ── exclusions / skip / extensions ──────────────────────────────────────
     @property
     def identifier_exclusions(self) -> set[str]:
         return self._identifier_exclusions if self._identifier_exclusions is not None else patterns.IDENTIFIER_EXCLUSIONS

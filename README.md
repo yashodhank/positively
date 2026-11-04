@@ -32,9 +32,9 @@ code or meaning.
 ```
 pip install positively
 cd your-project
+positively install              # config + git hook + agent instruction
 positively check --all          # scan everything
 positively apply --all --apply  # auto-rewrite prose framing
-positively install-hook         # install pre-commit guard
 ```
 
 Or use the CLI:
@@ -43,6 +43,23 @@ positively check docs/ src/          # scan specific paths
 positively apply README.md           # dry-run one file
 positively apply README.md --apply   # rewrite it
 ```
+
+## Auto-registration
+
+`positively install` wires the tool into a project so it keeps enforcing itself
+— including in AI environments:
+
+| Command | What it writes |
+|---------|----------------|
+| `positively install` | everything below |
+| `positively init` | `.positively.toml` (config template) |
+| `positively install-hook` | `.git/hooks/pre-commit` (blocks framing/blockers/destructive intent) |
+| `positively install-agent` | `.kilo/command/enforce-positive-framing.md` (agent command, auto-loaded before edits) + a section in `AGENTS.md` (read by Kilo, Codex, Claude Code) |
+| `positively self-test` | validates maps + idempotence |
+
+The agent command mirrors the instruction that is auto-loaded before every
+edit, so agents know the negative→positive mappings and the "archive, don't
+delete" / "humans judge legality" rules without a human having to repeat them.
 
 ## Exit codes (`positively check`)
 
@@ -170,6 +187,8 @@ positively install-hook
 
 Runs `positively apply --apply` on staged prose/source files, then rejects
 commits that introduce framing, blocker code, or destructive-intent cautions.
+The hook delegates file-type and skip decisions to the tool itself (no
+duplicated extension list), and exits cleanly if `positively` is not installed.
 
 ## API
 

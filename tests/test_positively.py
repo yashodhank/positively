@@ -1,10 +1,32 @@
 """Tests for the positively positive-framing engine."""
 
+import argparse
+import contextlib
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
 
-from positively import engine, patterns, config
+from positively import apply, check, config, engine, patterns
+
+
+@contextlib.contextmanager
+def _env(**kwargs):
+    old = {k: os.environ.get(k) for k in kwargs}
+    os.environ.update(kwargs)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _cfg(root=None):
+    return config.Config(root=root or Path(tempfile.gettempdir()))
 
 
 class FramingTest(unittest.TestCase):
@@ -316,6 +338,184 @@ class NewExtensionTest(unittest.TestCase):
         once, _ = engine.reverse_framing(sample)
         twice, _ = engine.reverse_framing(once)
         self.assertEqual(once, twice)
+
+
+class CasePreservationTest(unittest.TestCase):
+    def setUp(self):
+        engine.set_config(_cfg())
+
+    def test_uppercase_preserved(self):
+        out, _ = engine.reverse_framing("HARD GATE")
+        self.assertIn("MILESTONE", out)
+        self.assertNotIn("milestone", out)
+
+    def test_title_case_preserved(self):
+        out, _ = engine.reverse_framing("Hard Gate")
+        self.assertIn("Milestone", out)
+
+
+class MultiMatchTest(unittest.TestCase):
+    def setUp(self):
+        engine.set_config(_cfg())
+
+    def test_scan_reports_every_match(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.md"
+            p.write_text("This is illegal. That is illegal. Also illegal.\n")
+            rep = engine.scan_path(p)
+            self.assertEqual(len(rep.framing), 3)
+
+
+class SourceInlineCodeTest(unittest.TestCase):
+    def setUp(self):
+        engine.set_config(_cfg())
+
+    def test_docstring_backtick_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.py"
+            p.write_text('def f():\n    """the `hard gate` stays"""\n    return 1\n')
+            out, n = engine.apply_framing(p, p.read_text())
+            self.assertIn("`hard gate`", out)
+            self.assertNotIn("milestone", out)
+            self.assertEqual(n, 0)
+
+
+class ConfigLoadTest(unittest.TestCase):
+    def test_load_config_file_merges(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".positively.toml").write_text('[phrases]\n"custom bad" = "custom good"\n')
+            with _env(POSITIVELY_ROOT=str(root)):
+                cfg = config.load_config()
+            self.assertIn(("custom bad", "custom good"), cfg.phrase_map)
+
+    def test_invalid_config_falls_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".positively.toml").write_text("this is not valid toml [")
+            with _env(POSITIVELY_ROOT=str(root)):
+                cfg = config.load_config()
+            self.assertTrue(any("could not parse" in w for w in cfg.warnings))
+
+    def test_unknown_key_warns(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".positively.toml").write_text('exclusion = ["X"]\n')
+            with _env(POSITIVELY_ROOT=str(root)):
+                cfg = config.load_config()
+            self.assertTrue(any("unknown config key 'exclusion'" in w for w in cfg.warnings))
+
+    def test_case_insensitive_override(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".positively.toml").write_text('[phrases]\n"HARD GATE" = "custom"\n')
+            with _env(POSITIVELY_ROOT=str(root)):
+                cfg = config.load_config()
+            negs = [n for n, _ in cfg.phrase_map]
+            self.assertNotIn("hard gate", negs)
+            self.assertIn("HARD GATE", negs)
+
+
+class IterPathsTest(unittest.TestCase):
+    def test_all_skips_skip_parts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".venv").mkdir()
+            (root / ".venv" / "x.py").write_text("# hard gate\n")
+            (root / "real.py").write_text("# hard gate\n")
+            cfg = config.Config(root=root)
+            ns = argparse.Namespace(all=True, quiet=True)
+            paths = check._iter_paths(root, ns, cfg)
+            names = [p.name for p in paths]
+            self.assertIn("real.py", names)
+            self.assertNotIn("x.py", names)
+
+    def test_dir_arg_skips_skip_parts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "legal").mkdir()
+            (root / "legal" / "a.md").write_text("hard gate\n")
+            (root / "ok.md").write_text("hard gate\n")
+            cfg = config.Config(root=root)
+            ns = argparse.Namespace(paths=[str(root)], all=False, quiet=True)
+            paths = check._iter_paths(root, ns, cfg)
+            names = [p.name for p in paths]
+            self.assertIn("ok.md", names)
+            self.assertNotIn("a.md", names)
+
+
+class AtomicWriteTest(unittest.TestCase):
+    def test_atomic_write_preserves_mode_and_crlf(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.md"
+            p.write_bytes(b"line1\r\nline2\r\n")
+            p.chmod(0o755)
+            apply._atomic_write(p, "line1\r\nline2 changed\r\n")
+            self.assertEqual(apply._read(p), "line1\r\nline2 changed\r\n")
+            self.assertTrue(os.stat(p).st_mode & stat.S_IXUSR)
+
+
+class CliSelfTest(unittest.TestCase):
+    def test_self_test_ok(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            with _env(POSITIVELY_ROOT=str(d)):
+                rc = cli._self_test()
+            self.assertEqual(rc, 0)
+
+
+class InstallTest(unittest.TestCase):
+    def test_install_agent_writes_command_and_agents(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            rc = cli._install_agent(config.Config(root=root), force=False)
+            self.assertEqual(rc, 0)
+            cmd = root / ".kilo" / "command" / "enforce-positive-framing.md"
+            self.assertTrue(cmd.exists())
+            self.assertIn("enforce-positive-framing", cmd.read_text())
+            agents = root / "AGENTS.md"
+            self.assertTrue(agents.exists())
+            self.assertIn("Positive framing", agents.read_text())
+
+    def test_install_agent_idempotent(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            cli._install_agent(config.Config(root=root), force=False)
+            cli._install_agent(config.Config(root=root), force=False)
+            text = (root / "AGENTS.md").read_text()
+            self.assertEqual(text.count("positively:start"), 1)
+
+    def test_install_hook_installs(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".git" / "hooks").mkdir(parents=True)
+            rc = cli._install_hook(config.Config(root=root), force=False)
+            self.assertEqual(rc, 0)
+            hook = root / ".git" / "hooks" / "pre-commit"
+            self.assertTrue(hook.exists())
+            self.assertTrue(os.access(hook, os.X_OK))
+
+    def test_install_hook_skips_non_git(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            rc = cli._install_hook(config.Config(root=root), force=False)
+            self.assertEqual(rc, 0)
+            self.assertFalse((root / ".git" / "hooks" / "pre-commit").exists())
+
+    def test_install_full(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / ".git" / "hooks").mkdir(parents=True)
+            rc = cli._install(config.Config(root=root), force=False)
+            self.assertEqual(rc, 0)
+            self.assertTrue((root / ".positively.toml").exists())
+            self.assertTrue((root / ".git" / "hooks" / "pre-commit").exists())
+            self.assertTrue((root / ".kilo" / "command" / "enforce-positive-framing.md").exists())
 
 
 if __name__ == "__main__":
