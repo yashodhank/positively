@@ -1,0 +1,55 @@
+# .positively.toml — positive-framing configuration
+#
+# Copy this file into your repository root and customize it. Every field is
+# OPTIONAL and MERGES into the built-in defaults (see README for the defaults).
+# Commented entries below show the accepted keys and example values.
+
+# ── Exclusions: identifiers / constants never to rewrite ────────────────────
+exclusions = [
+    # "MY_CONSTANT",
+    # "SCOPE_GATED",
+    # "BLOCKED",
+]
+
+# ── String literals (JSON/API contract values) never to rewrite ─────────────
+string_exclusions = [
+    # "halt",
+    # "refused",
+]
+
+# ── Technical terms where "never"/"cannot" is a fact, not framing ───────────
+technical_terms = [
+    # "never_type",
+    # "cannot parse",
+]
+
+# ── Path parts skipped when walking the repo ────────────────────────────────
+skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
+
+# ── Extra file extensions (merged into built-in sets) ───────────────────────
+# prose_exts = [".md", ".markdown", ".txt", ".rst", ".adoc"]
+# source_exts = [".py", ".c", ".h", ".sh", ".m4", ".js", ".jsx", ".ts", ".tsx", ".java", ".php", ".rs", ".go", ".swift", ".kt", ".rb", ".css", ".scss"]
+
+# ── Phrase overrides (negative → positive, case-insensitive, longest-first) ─
+[phrases]
+# "hard gates" = "milestones"
+# "must refuse" = "declines"
+# "refused" = "declined"
+# "out of scope" = "outside current scope"
+# "unrecoverable" = "pending-capture"
+# "not allowed" = "requires authorization"
+
+# ── Word overrides (single-token, case-preserving) ──────────────────────────
+[words]
+# refuse = "decline"
+# halt = "pause"
+# abandoned = "deferred"
+
+# ── Blocker patterns (code that literally blocks a feature path) ────────────
+# Each entry: regex + label + severity + suggestion. Detection only by default;
+# the `positively check` command reports them.
+# [[blockers]]
+# pattern = "return\\s+BLOCKED"
+# label = "blocked-return"
+# severity = "high"
+# suggestion = "Route to permissive default"
