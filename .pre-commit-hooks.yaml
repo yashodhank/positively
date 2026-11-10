@@ -1,0 +1,22 @@
+# pre-commit framework hooks for positively.
+#
+# Usage in your .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/yashodhank/positively
+#       rev: v0.2.0
+#       hooks:
+#         - id: positively-apply   # auto-reverse framing on staged files
+#         - id: positively-check   # block framing/destructive-intent commits
+- id: positively-apply
+  name: positively apply
+  description: Auto-reverse negative framing in staged files
+  entry: positively apply --apply
+  language: python
+  types: [text]
+- id: positively-check
+  name: positively check
+  description: Flag negative framing and destructive intent in staged files
+  entry: positively check
+  language: python
+  types: [text]

@@ -6,18 +6,20 @@
 #
 # Install:
 #   positively install-hook
-# or:
-#   cp src/positively/pre-commit-hook.sh .git/hooks/pre-commit
 #
-# The hook delegates file-type and skip decisions to the tool itself, so the
-# supported extension set and skip rules stay in one place (no duplicated list).
+# Resolves `positively` from PATH first (works for pip, pipx, uvx, and
+# venv installs alike); falls back to the module form only when the CLI is
+# not on PATH. Exits cleanly when positively is not available at all.
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO"
 
-# Skip silently if positively is not installed on the default python3.
-if ! python3 -c "import positively" >/dev/null 2>&1; then
+if command -v positively >/dev/null 2>&1; then
+  POSITIVELY_RUN=(positively)
+elif python3 -c "import positively" >/dev/null 2>&1; then
+  POSITIVELY_RUN=(python3 -m positively.cli)
+else
   exit 0
 fi
 
@@ -31,7 +33,7 @@ if [ "${#STAGED[@]}" -eq 0 ]; then
 fi
 
 # Auto-reverse framing on staged files (the tool filters type + skip rules).
-python3 -m positively.apply --apply -- "${STAGED[@]}" >/dev/null
+"${POSITIVELY_RUN[@]}" apply --apply -- "${STAGED[@]}" >/dev/null
 
 # Re-stage anything the engine changed.
 for f in "${STAGED[@]}"; do
@@ -41,4 +43,4 @@ for f in "${STAGED[@]}"; do
 done
 
 # Block commits that still contain framing, blockers, or destructive intent.
-python3 -m positively.check --quiet -- "${STAGED[@]}"
+"${POSITIVELY_RUN[@]}" check --quiet -- "${STAGED[@]}"

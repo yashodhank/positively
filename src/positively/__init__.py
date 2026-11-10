@@ -8,4 +8,6 @@ CLI entry points:
   positively apply [paths...]     auto-rewrite framing
 """
 
+__version__ = "0.4.0"
+
 from . import engine, patterns, config  # noqa: F401
