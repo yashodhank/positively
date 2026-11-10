@@ -21,6 +21,18 @@ from . import patterns
 
 AUDIT_LOG = "positively-audit.md"
 
+HINT_THRESHOLD = 5000
+
+
+def _maybe_hint(paths: list[Path]) -> None:
+    if len(paths) > HINT_THRESHOLD:
+        print(
+            f"HINT: processing {len(paths)} files. Add heavy directories "
+            f"(vendored code, sample corpora, build output) to `skip` in "
+            f".positively.toml to make `--all` runs much faster.",
+            file=sys.stderr,
+        )
+
 
 def _git_context(root: Path) -> dict[str, str]:
     """Best-effort git author + branch, never raises."""
@@ -115,6 +127,7 @@ def run(args: argparse.Namespace) -> int:
                         paths.append(f)
             elif p.is_file():
                 paths.append(p)
+    _maybe_hint(paths)
 
     total_changes = 0
     audit: list[str] = []

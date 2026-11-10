@@ -45,6 +45,21 @@ def _iter_paths(repo: Path, args: argparse.Namespace, cfg: config.Config) -> lis
     return paths
 
 
+HINT_THRESHOLD = 5000
+
+
+def _maybe_hint(paths: list[Path]) -> None:
+    """Suggest skip config when scanning a very large file set — usually a
+    vendored corpus or sample tree that .positively.toml `skip` should cover."""
+    if len(paths) > HINT_THRESHOLD:
+        print(
+            f"HINT: scanning {len(paths)} files. Add heavy directories "
+            f"(vendored code, sample corpora, build output) to `skip` in "
+            f".positively.toml to make `--all` runs much faster.",
+            file=sys.stderr,
+        )
+
+
 def run(args: argparse.Namespace) -> int:
     cfg = config.load_config()
     engine.set_config(cfg)
@@ -53,6 +68,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"WARN config: {w}", file=sys.stderr)
 
     paths = _iter_paths(cfg.root, args, cfg)
+    _maybe_hint(paths)
     framing_total = 0
     blocker_total = 0
     caution_total = 0
