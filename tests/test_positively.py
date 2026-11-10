@@ -818,8 +818,9 @@ class DoctorTest(unittest.TestCase):
             cli._install_hook(config.Config(root=root), force=True)
             agents.install(root, {"claude", "kilo"})
             ns = argparse.Namespace(fix=False)
-            with contextlib.redirect_stdout(io.StringIO()) as out:
-                rc = cli._doctor(ns)
+            with _env(POSITIVELY_ROOT=str(root)):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    rc = cli._doctor(ns)
             self.assertEqual(rc, 0)
             self.assertIn("healthy", out.getvalue())
 
