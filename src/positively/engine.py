@@ -66,6 +66,12 @@ def is_source(path: Path) -> bool:
     return path.suffix.lower() in get_config().source_exts or path.name in patterns.FILENAMES
 
 
+def is_script(path: Path) -> bool:
+    """True for file types where every line is executable (whole-text caution
+    scanning): shell, SQL, Makefile/Dockerfile-style recipes."""
+    return path.suffix.lower() in {".sh", ".m4", ".sql"} or path.name in patterns.FILENAMES
+
+
 def should_skip(path: Path, cfg: config.Config | None = None) -> bool:
     """True if a path must never be scanned or rewritten.
 
@@ -103,7 +109,7 @@ def _mask_exclusions(text: str, cfg: config.Config) -> tuple[str, dict[str, str]
 
     - Identifiers and technical terms are masked as bare words.
     - String literals are masked only when quoted, so bare prose words like
-      "refused" still reverse to "declined" while the JSON value "refused"
+      `refused` still reverse to `declined` while the JSON value `"refused"`
       is preserved.
     """
     mask: dict[str, str] = {}
@@ -289,6 +295,10 @@ def _iter_source_comments(path: Path, text: str):
 
 _INLINE_CODE = re.compile(r"(`+).+?\1")
 
+# Single-line string literals (excludes triple-quoted docstrings, which the
+# comment patterns already cover as prose units).
+_STRING_LIT = re.compile(r'"[^"\n]*"|\'[^\'\n]*\'')
+
 
 def scan_framing(path: Path, text: str) -> list[FramingViolation]:
     violations: list[FramingViolation] = []
@@ -314,19 +324,44 @@ def scan_blockers(path: Path, text: str) -> list[BlockerFinding]:
     return findings
 
 
-def scan_cautions(path: Path, text: str) -> list[BlockerFinding]:
-    """Flag destructive-intent commands (deletion, force, data loss).
-
-    Scans whole-file text (prose and source) because destructive commands appear
-    in shell, SQL, Makefiles, and docs. Detection only — never auto-rewritten.
-    """
+def _find_caution_matches(path: Path, text: str, offset: int, scan_text: str) -> list[BlockerFinding]:
     findings: list[BlockerFinding] = []
     for pat, label, severity, suggestion in get_config().caution_patterns:
-        for m in pat.finditer(text):
-            line = text[: m.start()].count("\n") + 1
+        for m in pat.finditer(scan_text):
+            line = text[: offset + m.start()].count("\n") + 1
             findings.append(BlockerFinding(
                 str(path), line, m.group(0), label, severity, suggestion,
             ))
+    return findings
+
+
+def scan_cautions(path: Path, text: str) -> list[BlockerFinding]:
+    """Flag destructive-intent commands (deletion, force, data loss).
+
+    - Prose files: only rewriteable prose units are scanned with inline code
+      masked, so documentation quoting a command in backticks stays clean.
+    - Script-family files (shell, Makefile, Dockerfile, SQL, …): whole-file
+      text, because every line is executable.
+    - Other source files: comments and docstrings with inline code masked,
+      plus string literals in executable code (e.g. ``execute("DELETE …")``)
+      outside comment/docstring spans — so a docstring that documents a
+      command stays clean while real destructive calls are still caught.
+
+    Detection only — never auto-rewritten.
+    """
+    if is_script(path):
+        return _find_caution_matches(path, text, 0, text)
+    findings: list[BlockerFinding] = []
+    covered: list[tuple[int, int]] = []
+    for seg_start, _seg_end, seg in iter_prose_units(path, text):
+        covered.append((seg_start, _seg_end))
+        scan = _INLINE_CODE.sub(lambda m: " " * len(m.group(0)), seg)
+        findings.extend(_find_caution_matches(path, text, seg_start, scan))
+    if is_source(path) and not is_prose(path):
+        for m in _STRING_LIT.finditer(text):
+            if any(s <= m.start() < e for s, e in covered):
+                continue
+            findings.extend(_find_caution_matches(path, text, m.start(), m.group(0)))
     return findings
 
 

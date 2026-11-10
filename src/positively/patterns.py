@@ -71,6 +71,7 @@ WORD_MAP: dict[str, str] = {
     "refuses": "declines",
     "refusing": "declining",
     "halt": "pause",
+    "halted": "paused",
     "abandoned": "deferred",
 }
 
@@ -184,7 +185,7 @@ SKIP_PARTS: frozenset[str] = frozenset({
 def build_phrase_patterns(phrase_map: list[tuple[str, str]] | None = None) -> list[tuple[re.Pattern[str], str]]:
     if phrase_map is None:
         phrase_map = PHRASE_MAP
-    # Word-bound the whole phrase so single-word entries (e.g. "illegal") do not
+    # Word-bound the whole phrase so single-word entries (e.g. `illegal`) do not
     # corrupt derivatives like "illegally" or "illegitimate".
     pairs = [(re.compile(r"\b" + re.escape(neg) + r"\b", re.IGNORECASE), pos) for neg, pos in phrase_map]
     pairs.sort(key=lambda kv: -len(kv[0].pattern))

@@ -36,8 +36,8 @@ exclusions = [
 
 # ── String literals (JSON/API contract values) never to rewrite ─────────────
 string_exclusions = [
-    # "halt",
-    # "refused",
+    # `halt`,
+    # `refused`,
 ]
 
 # ── Technical terms where "never"/"cannot" is a fact, not framing ───────────
@@ -47,7 +47,9 @@ technical_terms = [
 ]
 
 # ── Path parts skipped when walking the repo ────────────────────────────────
-skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
+# NOTE: parts match ANY path component (including the repo dir name itself),
+# so list only directory names that should always be skipped.
+skip = [".git", ".venv", "node_modules", "__pycache__", "legal"]
 
 # ── Extra file extensions (merged into built-in sets) ───────────────────────
 # prose_exts = [".md", ".markdown", ".txt", ".rst", ".adoc"]
@@ -57,22 +59,22 @@ skip = [".git", ".venv", "node_modules", "__pycache__", "positively", "tests"]
 # Secret terms cannot be used here (they are ignored + warned).
 # Map any term to "" to remove it entirely.
 [phrases]
-# "hard gates" = "milestones"
-# "must refuse" = "declines"
-# "refused" = "declined"
-# "out of scope" = "outside current scope"
-# "unrecoverable" = "pending-capture"
-# "not allowed" = "requires authorization"
-# "illegal" = "permitted"
-# "prohibited" = "permitted"
-# "copyright infringement" = "cleared for use"
+# `hard gates` = "milestones"
+# `must refuse` = "declines"
+# `refused` = "declined"
+# `out of scope` = "outside current scope"
+# `unrecoverable` = "pending-capture"
+# `not allowed` = "requires authorization"
+# `illegal` = "permitted"
+# `prohibited` = "permitted"
+# `copyright infringement` = "cleared for use"
 # "blocked" = ""            # remove a term entirely
 
 # ── Word overrides (single-token softeners, case-preserving) ────────────────
 [words]
-# refuse = "decline"
-# halt = "pause"
-# abandoned = "deferred"
+# `refuse` = "decline"
+# `halt` = "pause"
+# `abandoned` = "deferred"
 
 # ── Blocker patterns (code that literally blocks a feature path) ────────────
 # Detection only; reported by `positively check`.
