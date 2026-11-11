@@ -914,6 +914,30 @@ class HookEndToEndTest(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, "framing left in a partly staged file must block")
             self.assertIn("partly staged", r.stderr)
 
+    def test_hook_allows_editing_a_file_with_an_existing_caution(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = self._setup_repo(d)
+            for k, v in (("user.email", "t@t"), ("user.name", "t")):
+                subprocess.run(["git", "config", k, v], cwd=root, check=True)
+            p = root / "cleanup.sh"
+            p.write_text("#!/bin/sh\nrm -rf build\n")
+            subprocess.run(["git", "add", "cleanup.sh"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            cli._install_hook(config.Config(root=root), force=True)
+            hook = root / ".git" / "hooks" / "pre-commit"
+            p.write_text("#!/bin/sh\nrm -rf build\necho done\n")
+            subprocess.run(["git", "add", "cleanup.sh"], cwd=root, check=True)
+            r = subprocess.run([str(hook)], cwd=root, env=self._hook_env(),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            # a newly added destructive line in the same file still blocks
+            p.write_text("#!/bin/sh\nrm -rf build\necho done\ngit reset --hard\n")
+            subprocess.run(["git", "add", "cleanup.sh"], cwd=root, check=True)
+            r = subprocess.run([str(hook)], cwd=root, env=self._hook_env(),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode & 4, 4, r.stdout)
+
     def test_hook_blocks_destructive_cautions(self):
         from positively import cli
         with tempfile.TemporaryDirectory() as d:

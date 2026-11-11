@@ -53,4 +53,8 @@ if [ "${#WHOLE[@]}" -gt 0 ]; then
 fi
 
 # Block commits that still contain framing, blockers, or destructive intent.
-"${POSITIVELY_RUN[@]}" check --quiet -- "${STAGED[@]}"
+# Blockers/cautions already in a file at HEAD do not block editing it; only
+# ones this commit adds do (no HEAD yet: every finding counts).
+SINCE=()
+if git rev-parse --verify -q HEAD >/dev/null; then SINCE=(--since HEAD); fi
+"${POSITIVELY_RUN[@]}" check --quiet ${SINCE[@]+"${SINCE[@]}"} -- "${STAGED[@]}"

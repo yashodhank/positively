@@ -263,6 +263,7 @@ def main() -> int:
     check_p.add_argument("paths", nargs="*", help="files or dirs to scan")
     check_p.add_argument("--all", action="store_true", help="scan the whole repo")
     check_p.add_argument("--quiet", "-q", action="store_true", help="only print summary")
+    check_p.add_argument("--since", metavar="REF", help="report only blockers/cautions added since git REF")
 
     apply_p = sub.add_parser("apply", help="auto-reverse negative framing")
     apply_p.add_argument("paths", nargs="*", help="files or dirs to process")
