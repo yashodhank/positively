@@ -5,6 +5,8 @@
 - Pre-commit hook: a partly staged file is checked but no longer rewritten.
   The rewrite was re-added whole and committed the file's unstaged edits.
   Run `positively install-hook --force` to pick up the fixed hook.
+- Pre-commit hook: blockers and cautions a file already had at HEAD no longer
+  block editing that file; only ones the commit adds do (`check --since REF`).
 
 ## 0.4.0
 
