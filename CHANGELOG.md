@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Pre-commit hook: a partly staged file is checked but no longer rewritten.
+  The rewrite was re-added whole and committed the file's unstaged edits.
+  Run `positively install-hook --force` to pick up the fixed hook.
+
 ## 0.4.0
 
 - New harnesses: Windsurf (`.windsurf/rules/positively.md`) and Cline

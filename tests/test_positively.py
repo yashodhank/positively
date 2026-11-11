@@ -895,6 +895,25 @@ class HookEndToEndTest(unittest.TestCase):
                                     cwd=root, capture_output=True, text=True)
             self.assertIn("README.md", staged.stdout)
 
+    def test_hook_keeps_unstaged_changes_out_of_the_commit(self):
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = self._setup_repo(d)
+            cli._install_hook(config.Config(root=root), force=True)
+            p = root / "README.md"
+            p.write_text("This step is illegal so it must refuse.\n")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+            p.write_text("This step is illegal so it must refuse.\nUNSTAGED WIP\n")
+            hook = root / ".git" / "hooks" / "pre-commit"
+            r = subprocess.run([str(hook)], cwd=root, env=self._hook_env(),
+                               capture_output=True, text=True, timeout=60)
+            staged = subprocess.run(["git", "show", ":README.md"], cwd=root,
+                                    capture_output=True, text=True).stdout
+            self.assertNotIn("UNSTAGED WIP", staged)
+            self.assertIn("UNSTAGED WIP", p.read_text())
+            self.assertNotEqual(r.returncode, 0, "framing left in a partly staged file must block")
+            self.assertIn("partly staged", r.stderr)
+
     def test_hook_blocks_destructive_cautions(self):
         from positively import cli
         with tempfile.TemporaryDirectory() as d:

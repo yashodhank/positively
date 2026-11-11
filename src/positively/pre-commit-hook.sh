@@ -24,23 +24,33 @@ else
 fi
 
 STAGED=()
+WHOLE=()
 while IFS= read -r -d '' f; do
   STAGED+=("$f")
+  # apply rewrites the working file and it is re-added whole, which would
+  # commit a partly staged file's unstaged edits: such files are only checked.
+  if git diff --quiet -- "$f"; then
+    WHOLE+=("$f")
+  else
+    echo "positively: $f is partly staged; not rewritten (stage the whole file to auto-fix)" >&2
+  fi
 done < <(git diff --cached --name-only -z --diff-filter=ACM)
 
 if [ "${#STAGED[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# Auto-reverse framing on staged files (the tool filters type + skip rules).
-"${POSITIVELY_RUN[@]}" apply --apply -- "${STAGED[@]}" >/dev/null
+if [ "${#WHOLE[@]}" -gt 0 ]; then
+  # Auto-reverse framing on fully staged files (the tool filters type + skip rules).
+  "${POSITIVELY_RUN[@]}" apply --apply -- "${WHOLE[@]}" >/dev/null
 
-# Re-stage anything the engine changed.
-for f in "${STAGED[@]}"; do
-  if ! git diff --quiet -- "$f"; then
-    git add -- "$f"
-  fi
-done
+  # Re-stage anything the engine changed.
+  for f in "${WHOLE[@]}"; do
+    if ! git diff --quiet -- "$f"; then
+      git add -- "$f"
+    fi
+  done
+fi
 
 # Block commits that still contain framing, blockers, or destructive intent.
 "${POSITIVELY_RUN[@]}" check --quiet -- "${STAGED[@]}"
