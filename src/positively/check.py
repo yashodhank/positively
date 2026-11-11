@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -68,7 +69,12 @@ def _drop_preexisting(rep: engine.Report, p: Path, ref: str) -> None:
     (multiset of label + match + whole line), so editing a flagged line
     still blocks. A file absent at `ref` keeps every finding. Framing is
     whole-file (auto-fixed)."""
-    r = subprocess.run(["git", "show", f"{ref}:./{p.name}"], cwd=p.parent or Path("."),
+    # Resolve against the caller's cwd: a hook runs with GIT_DIR set (worktrees), where git treats a
+    # subdirectory cwd as the tree root and `./name` would miss. Outside the cwd, fall back to the parent.
+    rel = os.path.relpath(p)
+    here = not rel.startswith("..")
+    r = subprocess.run(["git", "show", f"{ref}:./{rel if here else p.name}"],
+                       cwd=None if here else (p.parent or Path(".")),
                        capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
         return

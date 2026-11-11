@@ -944,6 +944,27 @@ class HookEndToEndTest(unittest.TestCase):
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode & 4, 4, r.stdout)
 
+    def test_hook_since_works_for_nested_file_with_git_dir_set(self):
+        # git exports GIT_DIR to hooks in linked worktrees; a subdirectory cwd must not break --since
+        from positively import cli
+        with tempfile.TemporaryDirectory() as d:
+            root = self._setup_repo(d)
+            for k, v in (("user.email", "t@t"), ("user.name", "t")):
+                subprocess.run(["git", "config", k, v], cwd=root, check=True)
+            (root / "ci").mkdir()
+            p = root / "ci" / "cleanup.sh"
+            p.write_text("#!/bin/sh\nrm -rf build\n")
+            subprocess.run(["git", "add", "ci/cleanup.sh"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+            cli._install_hook(config.Config(root=root), force=True)
+            p.write_text("#!/bin/sh\nrm -rf build\necho done\n")
+            subprocess.run(["git", "add", "ci/cleanup.sh"], cwd=root, check=True)
+            env = self._hook_env()
+            env["GIT_DIR"] = str(root / ".git")
+            r = subprocess.run([str(root / ".git" / "hooks" / "pre-commit")], cwd=root, env=env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
     def test_hook_blocks_destructive_cautions(self):
         from positively import cli
         with tempfile.TemporaryDirectory() as d:
