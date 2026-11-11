@@ -63,19 +63,31 @@ def _maybe_hint(paths: list[Path]) -> None:
 
 
 def _drop_preexisting(rep: engine.Report, p: Path, ref: str) -> None:
-    """Keep only blockers/cautions the change adds: drop findings the file
-    already had at `ref`, matched by (label, text) as a multiset. A file
-    absent at `ref` keeps every finding. Framing is whole-file (auto-fixed)."""
+    """Keep only blockers/cautions the change adds: drop a finding only when
+    the file at `ref` had the same finding on a byte-identical source line
+    (multiset of label + match + whole line), so editing a flagged line
+    still blocks. A file absent at `ref` keeps every finding. Framing is
+    whole-file (auto-fixed)."""
     r = subprocess.run(["git", "show", f"{ref}:./{p.name}"], cwd=p.parent or Path("."),
                        capture_output=True, text=True, errors="replace")
     if r.returncode != 0:
         return
+    base_lines = r.stdout.splitlines()
+    try:
+        new_lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
     base = engine.scan_text(p, r.stdout)
+
+    def key(f: engine.BlockerFinding, lines: list[str]) -> tuple[str, str, str]:
+        src = lines[f.line - 1] if 0 < f.line <= len(lines) else ""
+        return (f.label, f.match, src)
+
     for attr in ("blockers", "cautions"):
-        seen = Counter((f.label, f.match.strip()) for f in getattr(base, attr))
+        seen = Counter(key(f, base_lines) for f in getattr(base, attr))
         kept = []
         for f in getattr(rep, attr):
-            k = (f.label, f.match.strip())
+            k = key(f, new_lines)
             if seen[k]:
                 seen[k] -= 1
             else:

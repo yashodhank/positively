@@ -937,6 +937,12 @@ class HookEndToEndTest(unittest.TestCase):
             r = subprocess.run([str(hook)], cwd=root, env=self._hook_env(),
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode & 4, 4, r.stdout)
+            # editing the flagged line itself (same label, new target) still blocks
+            p.write_text("#!/bin/sh\nrm -rf /\necho done\n")
+            subprocess.run(["git", "add", "cleanup.sh"], cwd=root, check=True)
+            r = subprocess.run([str(hook)], cwd=root, env=self._hook_env(),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode & 4, 4, r.stdout)
 
     def test_hook_blocks_destructive_cautions(self):
         from positively import cli
