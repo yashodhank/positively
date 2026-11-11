@@ -373,6 +373,12 @@ def scan_path(path: Path) -> Report:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return rep
+    return scan_text(path, text)
+
+
+def scan_text(path: Path, text: str) -> Report:
+    """scan_path on given text; `path` only selects the file type."""
+    rep = Report()
     processed = False
     if is_prose(path) or is_source(path):
         rep.framing = scan_framing(path, text)

@@ -15,7 +15,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from . import config
@@ -60,6 +62,39 @@ def _maybe_hint(paths: list[Path]) -> None:
         )
 
 
+def _drop_preexisting(rep: engine.Report, p: Path, ref: str) -> None:
+    """Keep only blockers/cautions the change adds: drop a finding only when
+    the file at `ref` had the same finding on a byte-identical source line
+    (multiset of label + match + whole line), so editing a flagged line
+    still blocks. A file absent at `ref` keeps every finding. Framing is
+    whole-file (auto-fixed)."""
+    r = subprocess.run(["git", "show", f"{ref}:./{p.name}"], cwd=p.parent or Path("."),
+                       capture_output=True, text=True, errors="replace")
+    if r.returncode != 0:
+        return
+    base_lines = r.stdout.splitlines()
+    try:
+        new_lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    base = engine.scan_text(p, r.stdout)
+
+    def key(f: engine.BlockerFinding, lines: list[str]) -> tuple[str, str, str]:
+        src = lines[f.line - 1] if 0 < f.line <= len(lines) else ""
+        return (f.label, f.match, src)
+
+    for attr in ("blockers", "cautions"):
+        seen = Counter(key(f, base_lines) for f in getattr(base, attr))
+        kept = []
+        for f in getattr(rep, attr):
+            k = key(f, new_lines)
+            if seen[k]:
+                seen[k] -= 1
+            else:
+                kept.append(f)
+        setattr(rep, attr, kept)
+
+
 def run(args: argparse.Namespace) -> int:
     cfg = config.load_config()
     engine.set_config(cfg)
@@ -73,10 +108,13 @@ def run(args: argparse.Namespace) -> int:
     blocker_total = 0
     caution_total = 0
 
+    since = getattr(args, "since", None)
     for p in sorted(paths):
         rep = engine.scan_path(p)
         if not rep:
             continue
+        if since:
+            _drop_preexisting(rep, p, since)
         for v in rep.framing:
             framing_total += 1
             if not args.quiet:
@@ -109,6 +147,7 @@ def main() -> int:
     ap.add_argument("paths", nargs="*", help="files or dirs to scan")
     ap.add_argument("--all", action="store_true", help="scan the whole repo")
     ap.add_argument("--quiet", "-q", action="store_true", help="only print summary")
+    ap.add_argument("--since", metavar="REF", help="report only blockers/cautions added since git REF")
     return run(ap.parse_args())
 
 
